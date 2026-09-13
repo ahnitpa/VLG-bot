@@ -1,11 +1,25 @@
 import random
 import discord
 from discord import app_commands
+from threading import Thread
+from flask import Flask
 
-# ⚠️ PLACE YOUR BRAND NEW GENERATED TOKEN BETWEEN THESE QUOTES
+# 1. THE FAKE WEBSITE TRICK FOR RENDER FREE TIER
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is online!" # Render will read this and stay happy
+
+def run_web_server():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_web_server)
+    t.start()
+
+# 2. YOUR ORIGINAL BOT CODE
 TOKEN = 'MTU0ODY1MjUwNDY1NTMzMTQwOQ.GpEBtu.chSEwyo3qNulTI6fEF_2f11ZxcJJe3YZZGBGMc'
-
-# Your configuration settings (cleanly saved here)
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1548670697486688358
 
@@ -21,13 +35,12 @@ class MyBot(discord.Client):
 
 bot = MyBot()
 
-# --- TARGET 1: THE /GAMBLE SLASH COMMAND (With a 60-second cooldown) ---
 @bot.tree.command(name="gamble", description="Take a 1-in-5 chance to win a special role!")
-@app_commands.checks.cooldown(1, 60.0, key=lambda i: (i.user.id)) # 1 use every 60 seconds per user
+@app_commands.checks.cooldown(1, 60.0, key=lambda i: (i.user.id))
 async def gamble(interaction: discord.Interaction):
     member = interaction.user
     guild = interaction.guild
-    role = guild.get_role(ROLE_ID) # Fixed parenthesis and linked to top variable
+    role = guild.get_role(ROLE_ID)
 
     if not role:
         await interaction.response.send_message("❌ Error: The target role was not found.", ephemeral=True)
@@ -48,7 +61,6 @@ async def gamble(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(f"❌ **Unlucky!** You rolled a {roll}/5. Try again next time!", ephemeral=True)
 
-# Handle the cooldown warning message smoothly
 @gamble.error
 async def gamble_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
@@ -56,16 +68,12 @@ async def gamble_error(interaction: discord.Interaction, error: app_commands.App
     else:
         raise error
 
-# --- TARGET 2: THE NEW /SAY COMMAND ---
 @bot.tree.command(name="say", description="Make the bot repeat a message for you.")
 @app_commands.describe(message="The text you want the bot to say")
 async def say(interaction: discord.Interaction, message: str):
-    # Send a sneaky confirmation only visible to you so you don't get an error
     await interaction.response.send_message("Sending message...", ephemeral=True)
-    # Post the actual message into the text channel
     await interaction.channel.send(message)
 
-# --- TARGET 3: THE EMOJI REACTION SIDE QUEST ---
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
@@ -73,13 +81,14 @@ async def on_message(message: discord.Message):
 
     if "gamble" in message.content.lower():
         try:
-            custom_emoji = bot.get_emoji(CUSTOM_EMOJI_ID) # Fixed parenthesis and linked to top variable
+            custom_emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
             if custom_emoji:
-                await message.add_reaction(custom_emoji) # Fixed parenthesis and forced it to look for the emoji object
+                await message.add_reaction(custom_emoji)
             else:
                 await message.add_reaction("❤️")
         except discord.Forbidden:
             pass
 
-bot.run(TOKEN) # Fixed syntax and parenthesis layout
-
+# Start the web server first, then boot the bot
+keep_alive()
+bot.run(MTU0ODY1MjUwNDY1NTMzMTQwOQ.GpEBtu.chSEwyo3qNulTI6fEF_2f11ZxcJJe3YZZGBGMc)
