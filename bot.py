@@ -91,4 +91,4 @@ async def on_message(message: discord.Message):
 
 # Start the web server first, then boot the bot
 keep_alive()
-bot.run(MTU0ODY1MjUwNDY1NTMzMTQwOQ.GpEBtu.chSEwyo3qNulTI6fEF_2f11ZxcJJe3YZZGBGMc)
+bot.run('MTU0ODY1MjUwNDY1NTMzMTQwOQ.GpEBtu.chSEwyo3qNulTI6fEF_2f11ZxcJJe3YZZGBGMc')
