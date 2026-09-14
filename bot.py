@@ -74,6 +74,54 @@ async def say(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("Sending message...", ephemeral=True)
     await interaction.channel.send(message)
 
+# --- BONUS COMMAND 1: THE TIMEOUT COINFLIP ---
+@bot.tree.command(name="coinflip", description="Flip a coin. Heads you win, Tails you get timed out for 1 minute!")
+async def coinflip(interaction: discord.Interaction):
+    # Determine the coin flip result
+    result = random.choice(["Heads", "Tails"])
+    
+    if result == "Heads":
+        await interaction.response.send_message("🪙 **Heads!** You lucked out. You survive... for now.")
+    else:
+        # Tails means trouble! Attempt to timeout the user for 60 seconds
+        try:
+            from datetime import timedelta
+            duration = timedelta(seconds=60)
+            
+            # Apply the timeout to the member who ran the command
+            await interaction.user.timeout(duration, reason="Lost the chaotic coinflip command.")
+            await interaction.response.send_message("🪙 **Tails!** Oof, bad luck. Enjoy your **1-minute timeout**! 🤫")
+        except discord.Forbidden:
+            # This triggers if the user has higher server permissions (like an Admin/Owner) 
+            # because Discord physically blocks bots from timing out server admins.
+            await interaction.response.send_message("🪙 **Tails!** You should be timed out right now, but your server powers (Admin status) protected you! Cheat code activated. 🔐")
+        except Exception as e:
+            await interaction.response.send_message("🪙 **Tails!** I tried to mute you, but an error stopped me.", ephemeral=True)
+
+# --- BONUS COMMAND 2: THE FAKE THIEF ---
+@bot.tree.command(name="steal", description="Attempt to steal imaginary coins from a server member!")
+@app_commands.describe(target="The server member you want to rob")
+async def steal(interaction: discord.Interaction, target: discord.Member):
+    # Prevent users from robbing themselves
+    if target == interaction.user:
+        await interaction.response.send_message("🧠 You tried to rob yourself. You reached into your own pocket and found nothing. Brilliant.", ephemeral=True)
+        return
+
+    # Prevent users from trying to rob the bot
+    if target == bot.user:
+        await interaction.response.send_message("🤖 You cannot rob a cloud-hosted entity. My security firewall completely vaporized your wallet.", ephemeral=True)
+        return
+
+    # Roll a 50/50 chance for success or failure
+    outcome = random.choice(["success", "fail"])
+    
+    if outcome == "success":
+        stolen_amount = random.randint(100, 1000)
+        await interaction.response.send_message(f"💰 **Success!** {interaction.user.mention} stealthily pickpocketed **{stolen_amount} imaginary coins** from {target.mention}!")
+    else:
+        await interaction.response.send_message(f"🚨 **BUSTED!** {interaction.user.mention} tried to rob {target.mention} but tripped over a wire and got thrown into imaginary jail! 👮‍♂️")
+
+
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
