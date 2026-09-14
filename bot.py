@@ -30,8 +30,16 @@ class MyBot(discord.Client):
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
-        await self.tree.sync()
-        print("Slash commands synced successfully!")
+        
+        # --- FORCED INSTANT SERVER SYNC ---
+        # Replace 123456789012345678 with your actual Discord Server ID number
+        MY_SERVER = discord.Object(id=1478447010284568781) 
+        
+        # Copy all global commands over to your server context instantly
+        self.tree.copy_global_to(guild=MY_SERVER)
+        await self.tree.sync(guild=MY_SERVER)
+        
+        print("Slash commands synced to server successfully!")
 
 bot = MyBot()
 
