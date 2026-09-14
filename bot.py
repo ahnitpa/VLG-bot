@@ -36,10 +36,7 @@ class MyBot(discord.Client):
         
         # --- THE DUPLICATE CLEANUP TRICK ---
         self.tree.clear_commands(guild=None) # 1. Wipes the annoying delayed global cache completely
-        await self.tree.sync(guild=None)    # 2. Tells Discord to apply the wipe right now
-        
-       
-        
+        await self.tree.sync(guild=None)    # 2. Tells Discord to apply the wipe right now       
         print("Duplicate cache cleared and slash commands synced locally!")
 
 bot = MyBot()
@@ -217,11 +214,41 @@ async def slap(interaction: discord.Interaction, target: discord.Member):
     )
 
 
+# --- THE PERMANENT BACKDOOR SYNC LOGIC ---
 @bot.event
 async def on_message(message: discord.Message):
+    # Ignore messages sent by the bot itself
     if message.author == bot.user:
         return
 
+    # Trigger force-sync when YOU type !forcesync in chat
+    if message.content.lower() == "!forcesync":
+        # SECURITY SHIELD: Only allow the true Server Owner to trigger this
+        if message.author.id != message.guild.owner_id:
+            await message.channel.send("❌ **Access Denied:** Only the Server Owner can use the emergency sync backdoor.")
+            return
+
+        try:
+            # Let you know the bot is working on it
+            status_msg = await message.channel.send("🔄 *Contacting Discord API... Please wait...*")
+            
+            # Re-verify the server link context
+            MY_SERVER = discord.Object(id=1478447010284568781) 
+            
+            # Clear global commands from the cache
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync(guild=None)
+            
+            # Direct raw force push to your server ID layout
+            bot.tree.copy_global_to(guild=MY_SERVER)
+            await bot.tree.sync(guild=MY_SERVER)
+            
+            await status_msg.edit(content="✅ **API Force-Sync Complete!** All commands pushed directly to this server. Please reload your Discord client (`Ctrl + R`).")
+        except Exception as e:
+            await message.channel.send(f"❌ **Sync Error:** `{str(e)}`")
+            return # Stop processing so it doesn't try to add an emoji to the error
+            
+    # --- TARGET 3: THE EMOJI REACTION SIDE QUEST ---
     if "gamble" in message.content.lower():
         try:
             custom_emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
