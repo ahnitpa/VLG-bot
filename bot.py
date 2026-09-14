@@ -21,7 +21,7 @@ def keep_alive():
 
 # --- 2. BOT CONFIGURATION VARIABLES ---
 # ⚠️ MAKE SURE TO PUT YOUR REAL RE-GENERATED TOKEN BETWEEN THESE QUOTES
-TOKEN = 'MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q'
+TOKEN = ('MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q')
 
 # Your exact IDs from your Discord server
 SERVER_ID = 1478447010284568781
@@ -188,4 +188,4 @@ async def on_message(message: discord.Message):
 
 # --- 6. START UP THE BOT ENGINES ---
 keep_alive()
-bot.run'MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q'
+bot.run('MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q')
