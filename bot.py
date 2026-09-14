@@ -121,6 +121,41 @@ async def steal(interaction: discord.Interaction, target: discord.Member):
     else:
         await interaction.response.send_message(f"🚨 **BUSTED!** {interaction.user.mention} tried to rob {target.mention} but tripped over a wire and got thrown into imaginary jail! 👮‍♂️")
 
+# --- BONUS COMMAND 3: THE TRIVIAL JUDGEMENT ---
+@bot.tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
+@app_commands.describe(thing="The object, person, or idea you want rated")
+async def rate(interaction: discord.Interaction, thing: str):
+    # Generate a random rating from 0 to 10
+    score = random.randint(0, 10)
+    
+    # Funny reactions based on how high or low the score is
+    if score <= 3:
+        comments = [
+            "Honestly, I've seen better data in a corrupted Excel spreadsheet.",
+            "Absolutely tragic. Delete this.",
+            "This is so bad it almost crashed my servers."
+        ]
+    elif score <= 7:
+        comments = [
+            "Perfectly mid. Neither impressive nor disappointing.",
+            "It's alright, but it doesn't exactly make my processors whir.",
+            "Decent effort, but standard default Discord settings are more exciting."
+        ]
+    else:
+        comments = [
+            "Magnificent! I'm thoroughly impressed. :0",
+            "100% approved right here.",
+            "This deserves to be pinned. Amazing!"
+        ]
+        
+    chosen_comment = random.choice(comments)
+    
+    await interaction.response.send_message(
+        f"🧐 **Judgement Time :3**\n"
+        f"**Thing:** {thing}\n"
+        f"**Rating:** `{score}/10`\n"
+        f"💬 *\"{chosen_comment}\"*")
+
 
 @bot.event
 async def on_message(message: discord.Message):
