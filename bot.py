@@ -156,6 +156,33 @@ async def rate(interaction: discord.Interaction, thing: str):
         f"**Rating:** `{score}/10`\n"
         f"💬 *\"{chosen_comment}\"*")
 
+# --- BONUS COMMAND 4: THE MAGIC ORACLE ---
+@bot.tree.command(name="8ball", description="Ask the Magic 8-Ball a question and receive its wisdom.")
+@app_commands.describe(question="The question you want the oracle to answer")
+async def eightball(interaction: discord.Interaction, question: str):
+    responses = [
+        # Positive
+        "🟢 My husband said yes in the distance.",
+        "🟢 Yes.",
+        "🟢 100% approved",
+        # Neutral
+        "🟡 Ask me again next week.",
+        "🟡 Try again later.",
+        "🟡 Better not tell you now, my servers might break.",
+        # Negative
+        "🔴 Absolutely Disagree, go do something else.",
+        "🔴 Don't count on it.",
+        "🔴 No."
+    ]
+    
+    chosen_response = random.choice(responses)
+    
+    await interaction.response.send_message(
+        f"🔮 **The Magic 8-Ball Oracle**\n"
+        f"❓ **Question:** {question}\n"
+        f"💬 **Answer:** {chosen_response}"
+    )
+
 
 @bot.event
 async def on_message(message: discord.Message):
