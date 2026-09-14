@@ -31,15 +31,18 @@ class MyBot(discord.Client):
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         
-        # --- FORCED INSTANT SERVER SYNC ---
-        # Replace 123456789012345678 with your actual Discord Server ID number
-        MY_SERVER = discord.Object(id=1478447010284568781) 
+        # Define your server context
+        MY_SERVER = discord.Object(id=1478447010284568781) # Keep your real Server ID here!
         
-        # Copy all global commands over to your server context instantly
+        # --- THE DUPLICATE CLEANUP TRICK ---
+        self.tree.clear_commands(guild=None) # 1. Wipes the annoying delayed global cache completely
+        await self.tree.sync(guild=None)    # 2. Tells Discord to apply the wipe right now
+        
+        # Now re-apply your clean, instant server list
         self.tree.copy_global_to(guild=MY_SERVER)
         await self.tree.sync(guild=MY_SERVER)
         
-        print("Slash commands synced to server successfully!")
+        print("Duplicate cache cleared and slash commands synced locally!")
 
 bot = MyBot()
 
