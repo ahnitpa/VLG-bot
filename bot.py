@@ -38,9 +38,7 @@ class MyBot(discord.Client):
         self.tree.clear_commands(guild=None) # 1. Wipes the annoying delayed global cache completely
         await self.tree.sync(guild=None)    # 2. Tells Discord to apply the wipe right now
         
-        # Now re-apply your clean, instant server list
-        self.tree.copy_global_to(guild=MY_SERVER)
-        await self.tree.sync(guild=MY_SERVER)
+       
         
         print("Duplicate cache cleared and slash commands synced locally!")
 
