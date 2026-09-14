@@ -183,6 +183,30 @@ async def eightball(interaction: discord.Interaction, question: str):
         f"💬 **Answer:** {chosen_response}"
     )
 
+# --- BONUS COMMAND 5: THE CHANNEL NUISANCE ---
+@bot.tree.command(name="slap", description="Slap a fellow server member with a completely random object!")
+@app_commands.describe(target="The server member you want to slap")
+async def slap(interaction: discord.Interaction, target: discord.Member):
+    # Prevent users from slapping themselves
+    if target == interaction.user:
+        await interaction.response.send_message(f"🤕 {interaction.user.mention} tried to slap themselves but missed and fell over. Critical failure.")
+        return
+
+    items = [
+        "a giant, wet trout 🐟",
+        "a broken mechanical keyboard ⌨️",
+        "a textbook on advanced server hosting 📚",
+        "a stale baguette 🥖",
+        "a comically large rubber duck 🦆",
+        "a bucket of freezing cloud-server cooling water 🪣"
+    ]
+    
+    chosen_item = random.choice(items)
+    
+    await interaction.response.send_message(
+        f"💥 **WHACK!** {interaction.user.mention} slaps {target.mention} across the face with {chosen_item}!"
+    )
+
 
 @bot.event
 async def on_message(message: discord.Message):
