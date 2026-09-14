@@ -3,13 +3,14 @@ import discord
 from discord import app_commands
 from threading import Thread
 from flask import Flask
+from datetime import timedelta
 
-# 1. THE FAKE WEBSITE TRICK FOR RENDER FREE TIER
+# --- 1. THE WEB SERVER (RENDER FREE TIER TRICK) ---
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is online!" # Render will read this and stay happy
+    return "Bot is online and active!"
 
 def run_web_server():
     app.run(host='0.0.0.0', port=8080)
@@ -18,35 +19,43 @@ def keep_alive():
     t = Thread(target=run_web_server)
     t.start()
 
-# 2. YOUR ORIGINAL BOT CODE
+# --- 2. BOT CONFIGURATION VARIABLES ---
+# ⚠️ MAKE SURE TO PUT YOUR REAL RE-GENERATED TOKEN BETWEEN THESE QUOTES
 TOKEN = 'MTU0ODY1MjUwNDY1NTMzMTQwOQ.GpEBtu.chSEwyo3qNulTI6fEF_2f11ZxcJJe3YZZGBGMc'
+
+# Your exact IDs from your Discord server
+SERVER_ID = 1478447010284568781
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1548670697486688358
 
-class MyBot(discord.Client):
+MY_SERVER = discord.Object(id=SERVER_ID)
+
+# --- 3. CUSTOM BOT CLASS ---
+class CustomBot(discord.Client):
     def __init__(self):
+        # Requesting intents so it can read chat messages and roles
         super().__init__(intents=discord.Intents.all())
         self.tree = app_commands.CommandTree(self)
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         
-        # Define your server context
-        MY_SERVER = discord.Object(id=1478447010284568781) # Keep your real Server ID here!
-        
-        # --- THE DUPLICATE CLEANUP TRICK ---
-        self.tree.clear_commands(guild=None) # 1. Wipes the annoying delayed global cache completely
-        await self.tree.sync(guild=None)    # 2. Tells Discord to apply the wipe right now       
-        print("Duplicate cache cleared and slash commands synced locally!")
+        # This force-syncs your commands ONLY to your specific server ID
+        # It guarantees zero duplicate commands and instant deployment!
+        self.tree.copy_global_to(guild=MY_SERVER)
+        await self.tree.sync(guild=MY_SERVER)
+        print("Slash commands completely synced to your server!")
 
-bot = MyBot()
+bot = CustomBot()
+
+# --- 4. ALL SLASH COMMANDS ---
 
 @bot.tree.command(name="gamble", description="Take a 1-in-5 chance to win a special role!")
 @app_commands.checks.cooldown(1, 60.0, key=lambda i: (i.user.id))
 async def gamble(interaction: discord.Interaction):
     member = interaction.user
     guild = interaction.guild
-    role = guild.get_role(ROLE_ID)
+    role = guild.get_role(1535617025744048268)
 
     if not role:
         await interaction.response.send_message("❌ Error: The target role was not found.", ephemeral=True)
@@ -63,7 +72,7 @@ async def gamble(interaction: discord.Interaction):
             await member.add_roles(role)
             await interaction.response.send_message(f"🎉 **Lucky!** You rolled a {roll}/5 and won the **{role.name}** role!")
         except discord.Forbidden:
-            await interaction.response.send_message("❌ Error: I do not have permission to give you this role. Move my role higher!", ephemeral=True)
+            await interaction.response.send_message("❌ Error: I don't have permission. Drag my bot role ABOVE the target role!", ephemeral=True)
     else:
         await interaction.response.send_message(f"❌ **Unlucky!** You rolled a {roll}/5. Try again next time!", ephemeral=True)
 
@@ -76,189 +85,107 @@ async def gamble_error(interaction: discord.Interaction, error: app_commands.App
 
 @bot.tree.command(name="say", description="Make the bot repeat a message for you.")
 @app_commands.describe(message="The text you want the bot to say")
+@app_commands.checks.has_permissions(administrator=True) # 🔒 ONLY ADMINS CAN USE THIS NOW
 async def say(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("Sending message...", ephemeral=True)
     await interaction.channel.send(message)
 
-# --- BONUS COMMAND 1: THE TIMEOUT COINFLIP ---
+# Handle the error smoothly if a regular user tries to sneakily bypass and use it
+@say.error
+async def say_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ **Access Denied:** You need `Administrator` permissions to make me speak!", ephemeral=True)
+    else:
+        raise error
+
 @bot.tree.command(name="coinflip", description="Flip a coin. Heads you win, Tails you get timed out for 1 minute!")
 async def coinflip(interaction: discord.Interaction):
-    # Determine the coin flip result
     result = random.choice(["Heads", "Tails"])
-    
     if result == "Heads":
         await interaction.response.send_message("🪙 **Heads!** You lucked out. You survive... for now.")
     else:
-        # Tails means trouble! Attempt to timeout the user for 60 seconds
         try:
-            from datetime import timedelta
             duration = timedelta(seconds=60)
-            
-            # Apply the timeout to the member who ran the command
-            await interaction.user.timeout(duration, reason="Lost the chaotic coinflip command.")
-            await interaction.response.send_message("🪙 **Tails!** Oof, bad luck. Enjoy your **1-minute timeout**! 🤫")
+            await interaction.user.timeout(duration, reason="Lost the coinflip game.")
+            await interaction.response.send_message("🪙 **Tails!** Oof, bad luck. Enjoy your **1-minute timeout**! :D")
         except discord.Forbidden:
-            # This triggers if the user has higher server permissions (like an Admin/Owner) 
-            # because Discord physically blocks bots from timing out server admins.
-            await interaction.response.send_message("🪙 **Tails!** You should be timed out right now, but your server powers (Admin status) protected you! Cheat code activated. 🔐")
-        except Exception as e:
-            await interaction.response.send_message("🪙 **Tails!** I tried to mute you, but an error stopped me.", ephemeral=True)
+            await interaction.response.send_message("🪙 **Tails!** You should be timed out right now, but your Admin powers protected you ._.")
 
-# --- BONUS COMMAND 2: THE FAKE THIEF ---
 @bot.tree.command(name="steal", description="Attempt to steal imaginary coins from a server member!")
 @app_commands.describe(target="The server member you want to rob")
 async def steal(interaction: discord.Interaction, target: discord.Member):
-    # Prevent users from robbing themselves
     if target == interaction.user:
-        await interaction.response.send_message("🧠 You tried to rob yourself. You reached into your own pocket and found nothing. Brilliant.", ephemeral=True)
+        await interaction.response.send_message("You tried robbing yourself. How does it feel?.", ephemeral=True)
         return
-
-    # Prevent users from trying to rob the bot
     if target == bot.user:
-        await interaction.response.send_message("🤖 You cannot rob a cloud-hosted entity. My security firewall completely vaporized your wallet.", ephemeral=True)
+        await interaction.response.send_message("Firewall completely vaporized your wallet.", ephemeral=True)
         return
 
-    # Roll a 50/50 chance for success or failure
     outcome = random.choice(["success", "fail"])
-    
     if outcome == "success":
         stolen_amount = random.randint(100, 1000)
-        await interaction.response.send_message(f"💰 **Success!** {interaction.user.mention} stealthily pickpocketed **{stolen_amount} imaginary coins** from {target.mention}!")
+        await interaction.response.send_message(f"💰 **Success!** {interaction.user.mention} stole **{stolen_amount} coins** from {target.mention}!")
     else:
-        await interaction.response.send_message(f"🚨 **BUSTED!** {interaction.user.mention} tried to rob {target.mention} but tripped over a wire and got thrown into imaginary jail! 👮‍♂️")
+        await interaction.response.send_message(f"🚨 **BUSTED!** {interaction.user.mention} tried to rob {target.mention} but got thrown into imaginary jail! 👮‍♂️")
 
-# --- BONUS COMMAND 3: THE TRIVIAL JUDGEMENT ---
 @bot.tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
 @app_commands.describe(thing="The object, person, or idea you want rated")
 async def rate(interaction: discord.Interaction, thing: str):
-    # Generate a random rating from 0 to 10
     score = random.randint(0, 10)
-    
-    # Funny reactions based on how high or low the score is
     if score <= 3:
-        comments = [
-            "Honestly, I've seen better data in a corrupted Excel spreadsheet.",
-            "Absolutely tragic. Delete this.",
-            "This is so bad it almost crashed my servers."
-        ]
+        comments = ["Absolutely tragic. Delete this.", "This is so bad it almost crashed my servers."]
     elif score <= 7:
-        comments = [
-            "Perfectly mid. Neither impressive nor disappointing.",
-            "It's alright, but it doesn't exactly make my processors whir.",
-            "Decent effort, but standard default Discord settings are more exciting."
-        ]
+        comments = ["Perfectly mid. Neither impressive nor disappointing.", "Decent effort."]
     else:
-        comments = [
-            "Magnificent! I'm thoroughly impressed. :0",
-            "100% approved right here.",
-            "This deserves to be pinned. Amazing!"
-        ]
-        
-    chosen_comment = random.choice(comments)
+        comments = ["Magnificent! I'm impressed", "100% cloud-approved excellence."]
     
-    await interaction.response.send_message(
-        f"🧐 **Judgement Time :3**\n"
-        f"**Thing:** {thing}\n"
-        f"**Rating:** `{score}/10`\n"
-        f"💬 *\"{chosen_comment}\"*")
+    await interaction.response.send_message(f"🧐 **Judgement Time!**\n**Thing:** {thing}\n**Rating:** `{score}/10`\n💬 *\"{random.choice(comments)}\"*")
 
-# --- BONUS COMMAND 4: THE MAGIC ORACLE ---
-@bot.tree.command(name="8ball", description="Ask the Magic 8-Ball a question and receive its wisdom.")
+@bot.tree.command(name="8ball", description="Ask the Magic 8-Ball a question.")
 @app_commands.describe(question="The question you want the oracle to answer")
 async def eightball(interaction: discord.Interaction, question: str):
-    responses = [
-        # Positive
-        "🟢 My husband said yes in the distance.",
-        "🟢 Yes.",
-        "🟢 100% approved",
-        # Neutral
-        "🟡 Ask me again next week.",
-        "🟡 Try again later.",
-        "🟡 Better not tell you now, my servers might break.",
-        # Negative
-        "🔴 Absolutely Disagree, go do something else.",
-        "🔴 Don't count on it.",
-        "🔴 No."
-    ]
-    
-    chosen_response = random.choice(responses)
-    
-    await interaction.response.send_message(
-        f"🔮 **The Magic 8-Ball Oracle**\n"
-        f"❓ **Question:** {question}\n"
-        f"💬 **Answer:** {chosen_response}"
-    )
+    responses = ["🟢 Absolutely yes.", "🟢 Signs point to yes.", "💡 Try again later.", "🔴 Don't count on it.", "🔴 My source code points to no."]
+    await interaction.response.send_message(f"🔮 **The Magic 8-Ball**\n❓ **Question:** {question}\n💬 **Answer:** {random.choice(responses)}")
 
-# --- BONUS COMMAND 5: THE CHANNEL NUISANCE ---
-@bot.tree.command(name="slap", description="Slap a fellow server member with a completely random object!")
+@bot.tree.command(name="slap", description="Slap a server member with a random object!")
 @app_commands.describe(target="The server member you want to slap")
 async def slap(interaction: discord.Interaction, target: discord.Member):
-    # Prevent users from slapping themselves
     if target == interaction.user:
-        await interaction.response.send_message(f"🤕 {interaction.user.mention} tried to slap themselves but missed and fell over. Critical failure.")
+        await interaction.response.send_message(f"🤕 {interaction.user.mention} tried to slap themselves but missed.")
         return
-
-    items = [
-        "a giant, wet trout 🐟",
-        "a broken mechanical keyboard ⌨️",
-        "a textbook on advanced server hosting 📚",
-        "a stale baguette 🥖",
-        "a comically large rubber duck 🦆",
-        "a bucket of freezing cloud-server cooling water 🪣"
-    ]
-    
-    chosen_item = random.choice(items)
-    
-    await interaction.response.send_message(
-        f"💥 **WHACK!** {interaction.user.mention} slaps {target.mention} across the face with {chosen_item}!"
-    )
+    items = ["a giant, wet trout 🐟", "a broken keyboard ⌨️", "a stale baguette 🥖", "a comically large rubber duck 🦆"]
+    await interaction.response.send_message(f"💥 **WHACK!** {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!")
 
 
-# --- THE PERMANENT BACKDOOR SYNC LOGIC ---
+# --- 5. CHAT TEXT EVENT TRIGGERS (!forcesync and emoji reactions) ---
 @bot.event
 async def on_message(message: discord.Message):
-    # Ignore messages sent by the bot itself
     if message.author == bot.user:
         return
 
-    # Trigger force-sync when YOU type !forcesync in chat
+    # Backdoor bypass in case you ever need to hard-sync things again
     if message.content.lower() == "!forcesync":
-        # SECURITY SHIELD: Only allow the true Server Owner to trigger this
         if message.author.id != message.guild.owner_id:
-            await message.channel.send("❌ **Access Denied:** Only the Server Owner can use the emergency sync backdoor.")
+            await message.channel.send("❌ **Access Denied:** Server Owner only.")
             return
+        
+        status = await message.channel.send("🔄 *Forcing direct tree sync...*")
+        bot.tree.copy_global_to(guild=MY_SERVER)
+        await bot.tree.sync(guild=MY_SERVER)
+        await status.edit(content="✅ **API Force-Sync Complete!** All commands refreshed.")
+        return
 
-        try:
-            # Let you know the bot is working on it
-            status_msg = await message.channel.send("🔄 *Contacting Discord API... Please wait...*")
-            
-            # Re-verify the server link context
-            MY_SERVER = discord.Object(id=1478447010284568781) 
-            
-            # Clear global commands from the cache
-            bot.tree.clear_commands(guild=None)
-            await bot.tree.sync(guild=None)
-            
-            # Direct raw force push to your server ID layout
-            bot.tree.copy_global_to(guild=MY_SERVER)
-            await bot.tree.sync(guild=MY_SERVER)
-            
-            await status_msg.edit(content="✅ **API Force-Sync Complete!** All commands pushed directly to this server. Please reload your Discord client (`Ctrl + R`).")
-        except Exception as e:
-            await message.channel.send(f"❌ **Sync Error:** `{str(e)}`")
-            return # Stop processing so it doesn't try to add an emoji to the error
-            
-    # --- TARGET 3: THE EMOJI REACTION SIDE QUEST ---
+    # React to the word gamble
     if "gamble" in message.content.lower():
         try:
-            custom_emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
+            custom_emoji = bot.get_emoji(1548670697486688358)
             if custom_emoji:
-                await message.add_reaction(custom_emoji)
+                await message.add_reaction(1548670697486688358)
             else:
                 await message.add_reaction("❤️")
         except discord.Forbidden:
             pass
 
-# Start the web server first, then boot the bot
+# --- 6. START UP THE BOT ENGINES ---
 keep_alive()
-bot.run('MTU0ODY1MjUwNDY1NTMzMTQwOQ.GpEBtu.chSEwyo3qNulTI6fEF_2f11ZxcJJe3YZZGBGMc')
+bot.run(MTU0ODY1MjUwNDY1NTMzMTQwOQ.GpEBtu.chSEwyo3qNulTI6fEF_2f11ZxcJJe3YZZGBGMc)
