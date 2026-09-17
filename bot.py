@@ -156,6 +156,37 @@ async def slap(interaction: discord.Interaction, target: discord.Member):
     items = ["a giant, wet trout 🐟", "a broken keyboard ⌨️", "a stale baguette 🥖", "a comically large rubber duck 🦆"]
     await interaction.response.send_message(f"💥 **WHACK!** {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!")
 
+# --- BONUS COMMAND 6: THE MILD ROAST GENERATOR ---
+@bot.tree.command(name="roast", description="Hit a fellow server member with a funny, harmless burn!")
+@app_commands.describe(target="The server member you want to roast")
+async def roast(interaction: discord.Interaction, target: discord.Member):
+    # Prevent users from roasting themselves
+    if target == interaction.user:
+        await interaction.response.send_message(f"🥺 {interaction.user.mention}, you can't roast yourself! Self-love only in this server.", ephemeral=True)
+        return
+
+    # Prevent users from trying to roast the bot
+    if target == bot.user:
+        await interaction.response.send_message("Back off. You can't roast bots..", ephemeral=True)
+        return
+
+    roasts = [
+        "is the type of person who pushes a door that clearly says 'Pull'.",
+        "looks like a person who claps when the airplane lands. ✈️",
+        "probably types with their two index fingers while looking directly at the keyboard.",
+        "has the emotional stability of an expired carton of milk. 🥛",
+        "is the human equivalent of a participation trophy.",
+        "looks like they remind the teacher to assign homework right before the bell rings. 🔔",
+        "probably puts milk in the bowl before the cereal. Absolutely criminal.",
+        "is like software update notifications—annoying, easily ignored, and always showing up at the worst time."
+    ]
+    
+    chosen_roast = random.choice(roasts)
+    
+    # Broadcast the roast into the public channel
+    await interaction.response.send_message(f"🔥 **BOOM!** {target.mention}, {chosen_roast}")
+
+
 
 # --- 5. CHAT TEXT EVENT TRIGGERS (!forcesync and emoji reactions) ---
 # --- 5. CHAT TEXT EVENT TRIGGERS ---
