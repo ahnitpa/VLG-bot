@@ -196,7 +196,7 @@ async def on_message(message: discord.Message):
     # --- NEW FEATURE: THE RANDOM INTERRUPTER (5% CHANCE) ---
     # random.random() picks a float between 0.0 and 1.0. 
     # 0.05 equals a 5% chance. If you want it more active, change 0.05 to 0.10 (10%).
-    if random.random() < 0.50:
+    if random.random() < 0.3:
         funny_responses = [
             "UHM. no.",
             "Are we really talking about this right now?",
