@@ -158,12 +158,13 @@ async def slap(interaction: discord.Interaction, target: discord.Member):
 
 
 # --- 5. CHAT TEXT EVENT TRIGGERS (!forcesync and emoji reactions) ---
+# --- 5. CHAT TEXT EVENT TRIGGERS ---
 @bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
-    # Backdoor bypass in case you ever need to hard-sync things again
+    # Trigger force-sync when YOU type !forcesync in chat
     if message.content.lower() == "!forcesync":
         if message.author.id != message.guild.owner_id:
             await message.channel.send("❌ **Access Denied:** Server Owner only.")
@@ -174,6 +175,37 @@ async def on_message(message: discord.Message):
         await bot.tree.sync(guild=MY_SERVER)
         await status.edit(content="✅ **API Force-Sync Complete!** All commands refreshed.")
         return
+
+    # React to the word gamble
+    if "gamble" in message.content.lower():
+        try:
+            custom_emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
+            if custom_emoji:
+                await message.add_reaction(custom_emoji)
+            else:
+                await message.add_reaction("🎲")
+        except discord.Forbidden:
+            pass
+
+    # --- NEW FEATURE: THE RANDOM INTERRUPTER (5% CHANCE) ---
+    # random.random() picks a float between 0.0 and 1.0. 
+    # 0.05 equals a 5% chance. If you want it more active, change 0.05 to 0.10 (10%).
+    if random.random() < 0.20:
+        funny_responses = [
+            "UHM. no.",
+            "Are we really talking about this right now?",
+            "silly.",
+            "Sir, this is a Wendy's.",
+            "what",
+            "I'm putting that message in my notes for future blackmail usage. >:) ",
+            "Idk about that one chief.",
+            "why."
+        ]
+        try:
+            # The bot will reply directly to the random message
+            await message.reply(random.choice(funny_responses))
+        except discord.Forbidden:
+            pass
 
     # React to the word gamble
     if "gamble" in message.content.lower():
