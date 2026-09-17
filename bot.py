@@ -160,6 +160,8 @@ async def slap(interaction: discord.Interaction, target: discord.Member):
 # --- 5. CHAT TEXT EVENT TRIGGERS (!forcesync and emoji reactions) ---
 # --- 5. CHAT TEXT EVENT TRIGGERS ---
 @bot.event
+# --- 5. CHAT TEXT EVENT TRIGGERS ---
+@bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
@@ -176,17 +178,21 @@ async def on_message(message: discord.Message):
         await status.edit(content="✅ **API Force-Sync Complete!** All commands refreshed.")
         return
 
-    # React to the word gamble
-    if "gamble" in message.content.lower():
+    # --- NEW FEATURE: THE INSTANT @PING RESPONSE ---
+    # Checks if the bot's user account was mentioned in the message
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
+        ping_responses = [
+            "You rang? I was busy calculating how much coins you've lost to `/gamble`.:( ",
+            "Hi",
+            "Speak before i mute you."
+        ]
         try:
-            custom_emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
-            if custom_emoji:
-                await message.add_reaction(custom_emoji)
-            else:
-                await message.add_reaction("🎲")
+            await message.reply(random.choice(ping_responses))
+            return # Stop processing the rest of the file so it doesn't double-reply!
         except discord.Forbidden:
             pass
 
+   
     # --- NEW FEATURE: THE RANDOM INTERRUPTER (5% CHANCE) ---
     # random.random() picks a float between 0.0 and 1.0. 
     # 0.05 equals a 5% chance. If you want it more active, change 0.05 to 0.10 (10%).
