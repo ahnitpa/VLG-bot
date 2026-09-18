@@ -65,9 +65,9 @@ async def profile_rate(interaction: discord.Interaction, target: discord.Member,
     await interaction.response.defer()
     
     try:
-       # INITIALIZE THE CLIENT SAFELY INSIDE THE COMMAND ENVIRONMENT HERE
-ai_client = genai.Client(api_key=AIzaSy-Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw)
-        
+        # INITIALIZE THE CLIENT SAFELY WITH INDENTS AND LINKED VARIABLE
+        ai_client = genai.Client(api_key=AIzaSy-Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw)
+
         # Gather profile context information to feed the AI
         target_name = target.display_name
         target_roles = [role.name for role in target.roles if role.name != "@everyone"]
