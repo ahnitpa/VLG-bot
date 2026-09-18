@@ -4,6 +4,7 @@ from discord import app_commands
 from threading import Thread
 from flask import Flask
 from datetime import timedelta
+import google.genai as genai # Imports Google's AI core tool
 
 # --- 1. THE WEB SERVER (RENDER FREE TIER TRICK) ---
 app = Flask('')
@@ -20,10 +21,11 @@ def keep_alive():
     t.start()
 
 # --- 2. BOT CONFIGURATION VARIABLES ---
-# ⚠️ MAKE SURE TO PUT YOUR REAL RE-GENERATED TOKEN BETWEEN THESE QUOTES
-TOKEN = ('MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q')
+TOKEN = 'MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q'
 
-# Your exact IDs from your Discord server
+# 🔑 PASTE YOUR COPIED GOOGLE GEMINI API KEY BETWEEN THESE SINGLE QUOTES
+GEMINI_API_KEY = 'AQ.Ab8RN6KzSYvlS9mgf31Zm7a1lssCAqsLEuD7USFicerUBrxwaw'
+
 SERVER_ID = 1478447010284568781
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1548670697486688358
@@ -33,18 +35,89 @@ MY_SERVER = discord.Object(id=SERVER_ID)
 # --- 3. CUSTOM BOT CLASS ---
 class CustomBot(discord.Client):
     def __init__(self):
-        # Requesting intents so it can read chat messages and roles
         super().__init__(intents=discord.Intents.all())
         self.tree = app_commands.CommandTree(self)
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
-        
-        # This force-syncs your commands ONLY to your specific server ID
-        # It guarantees zero duplicate commands and instant deployment!
         self.tree.copy_global_to(guild=MY_SERVER)
         await self.tree.sync(guild=MY_SERVER)
         print("Slash commands completely synced to your server!")
+
+bot = CustomBot()
+
+# Initialize the Gemini AI Client 
+ai_client = genai.Client(api_key=GEMINI_API_KEY)
+
+# --- 4. ALL SLASH COMMANDS ---
+
+# --- NEW FEATURE: THE AI PROFILE RATER ---
+@bot.tree.command(name="profile_rate", description="Have an AI Compliment, Criticize, or Insult a server member's profile!")
+@app_commands.describe(
+    target="The member you want to judge",
+    mode="Choose how the AI should treat this user's profile"
+)
+@app_commands.choices(mode=[
+    app_commands.Choice(name="Compliment", value="compliment"),
+    app_commands.Choice(name="Criticize", value="criticize"),
+    app_commands.Choice(name="Insult/Roast", value="insult")
+])
+async def profile_rate(interaction: discord.Interaction, target: discord.Member, mode: app_commands.Choice[str]):
+    # Defer the interaction immediately so the bot doesn't time out while waiting for the AI response
+    await interaction.response.defer()
+    
+    # Gather profile context information to feed the AI
+    target_name = target.display_name
+    target_roles = [role.name for role in target.roles if role.name != "@everyone"]
+    roles_list = ", ".join(target_roles) if target_roles else "No special server roles"
+    is_bot = "Yes, they are a bot" if target.bot else "No, they are a human user"
+    
+    # Block bots from getting targeted if desired, or let the AI roast other bots!
+    if target == bot.user:
+        await interaction.followup.send("🤖 Attempting to process my own profile caused an infinite logical paradox. Request denied.")
+        return
+
+    # Build the system prompt instruction based on what mode the user selected
+    if mode.value == "compliment":
+        behavior_instruction = "Write a creative, kind, and funny compliment praising this user based on their Discord profile details."
+    elif mode.value == "criticize":
+        behavior_instruction = "Write a witty, analytical, and slightly sarcastic critique of this user's profile. Be midly critical but playful."
+    else:
+        behavior_instruction = "Write a hilarious, savage, and deeply witty roast/insult targeting this user based on their details. Do not use generic insults; make it specific and clever."
+
+    # Combine instructions with target details
+    prompt = (
+        f"You are a chaotic, witty, and highly articulate Discord companion bot.\n"
+        f"Task: {behavior_instruction}\n\n"
+        f"Target User Data:\n"
+        f"- Display Name: {target_name}\n"
+        f"- Server Roles: {roles_list}\n"
+        f"- Is a Bot?: {is_bot}\n\n"
+        f"Keep your response concise (under 3 sentences) and highly customized to their data. Do not include introductory text, just provide the direct quote output."
+    )
+
+    try:
+        # Call the free Gemini Flash model to compute the text block
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash', # Adjust dynamically to stable flash model strings
+            contents=prompt,
+        )
+        ai_output = response.text
+        
+        # Determine the header label icon
+        icon = "💖" if mode.value == "compliment" else "🧐" if mode.value == "criticize" else "🔥"
+        
+        # Use followup.send because we deferred earlier
+        await interaction.followup.send(
+            f"{icon} **AI Judgement Matrix [{mode.name} Mode]**\n"
+            f"👤 **Target:** {target.mention}\n"
+            f"💬 *\"{ai_output.strip()}\"*"
+        )
+    except Exception as e:
+        await interaction.followup.send(f"❌ **AI Processing Error:** `{str(e)}`. Make sure your Gemini API key is valid!")
+
+# ... Keep all your previous commands (/gamble, /say, /coinflip, /steal, /rate, /8ball, /slap) below here ...
+# ... Keep your section 5 (on_message triggers) and section 6 (bot.run) at the very bottom ...
 
 bot = CustomBot()
 
