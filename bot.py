@@ -24,7 +24,7 @@ def keep_alive():
 TOKEN = 'MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q'
 
 # 🔑 PASTE YOUR COPIED GOOGLE GEMINI API KEY BETWEEN THESE SINGLE QUOTES
-GEMINI_API_KEY = 'AIzaSy.Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw'
+GEMINI_API_KEY = 'AIzaSy-Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw'
 
 SERVER_ID = 1478447010284568781
 ROLE_ID = 1535617025744048268
@@ -66,7 +66,7 @@ async def profile_rate(interaction: discord.Interaction, target: discord.Member,
     
     try:
        # INITIALIZE THE CLIENT SAFELY INSIDE THE COMMAND ENVIRONMENT HERE
-ai_client = genai.Client(api_key=AIzaSy.Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw)
+ai_client = genai.Client(api_key=AIzaSy-Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw)
         
         # Gather profile context information to feed the AI
         target_name = target.display_name
