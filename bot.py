@@ -213,9 +213,7 @@ async def on_message(message: discord.Message):
     # Checks if the bot's user account was mentioned in the message
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         ping_responses = [
-            "You rang? I was busy calculating how much coins you've lost to `/gamble`.:( ",
-            "Hi",
-            "Speak before i mute you."
+            "Haiiii :3",
         ]
         try:
             await message.reply(random.choice(ping_responses))
