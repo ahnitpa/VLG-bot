@@ -40,8 +40,8 @@ class CustomBot(discord.Client):
 
     async def on_ready(self):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
-        self.tree.copy_global_to(guild=1478447010284568781)
-        await self.tree.sync(guild=1478447010284568781)
+        self.tree.copy_global_to(guild=MY_SERVER)
+        await self.tree.sync(guild=MY_SERVER)
         print("Slash commands completely synced to your server!")
 
 bot = CustomBot()
