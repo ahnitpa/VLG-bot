@@ -4,7 +4,6 @@ from discord import app_commands
 from threading import Thread
 from flask import Flask
 from datetime import timedelta
-import google.genai as genai
 
 # --- 1. THE WEB SERVER (RENDER FREE TIER TRICK) ---
 app = Flask('')
@@ -24,8 +23,6 @@ def keep_alive():
 # ⚠️ REPLACE THE ENTIRE LINE BELOW WITH YOUR REAL BOT TOKEN SITUATED INSIDE SINGLE QUOTES
 TOKEN = 'MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q.'
 
-# ⚠️ REPLACE THE ENTIRE LINE BELOW WITH YOUR REAL GEMINI KEY SITUATED INSIDE SINGLE QUOTES
-GEMINI_API_KEY = 'AIzaSy-Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw'
 
 SERVER_ID = 1478447010284568781
 ROLE_ID = 1535617025744048268
@@ -185,73 +182,31 @@ async def roast(interaction: discord.Interaction, target: discord.Member):
     # Broadcast the roast into the public channel
     await interaction.response.send_message(f"🔥 **BOOM!** {target.mention}, {chosen_roast}")
 
-# Initialize the Gemini API client using the variable you defined earlier (wrapped in quotes)
-ai_client = genai.Client(api_key='AIzaSy-Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw')
+@bot.tree.command(name="avatar", description="Fetch user's profile picture")
+@app_commands.describe(target="The server member you want to snatch")
+async def avatar(interaction: discord.Interaction, target: discord.Member = None):
+    # If no target is specified, default to the user who ran the command
+    if target is None:
+        target = interaction.user
 
-@bot.tree.command(name="rateprofile", description="Let Gemini AI judge a member's profile based on your chosen mood!")
-@app_commands.describe(
-    target="The server member whose profile you want Gemini to judge",
-    mood="Choose how Gemini should treat their profile"
-)
-@app_commands.choices(mood=[
-    app_commands.Choice(name="Compliment", value="compliment"),
-    app_commands.Choice(name="Criticize", value="criticize"),
-    app_commands.Choice(name="Roast", value="roast")
-])
-async def rateprofile(interaction: discord.Interaction, target: discord.Member, mood: app_commands.Choice[str]):
-    # 1. Defer immediately to prevent Discord's 3-second timeout
-    await interaction.response.defer()
-
-    # 2. Extract profile details
-    account_age = target.created_at.strftime("%B %Y")
-    join_date = target.joined_at.strftime("%B %Y") if target.joined_at else "Unknown"
-    roles_list = [role.name for role in target.roles if role.name != "@everyone"]
-    roles_string = ", ".join(roles_list) if roles_list else "No special roles"
-    is_bot = "Yes (A fellow machine)" if target.bot else "No (A human)"
-
-    # 3. Adjust the AI's persona instructions based on the selected mood
-    if mood.value == "compliment":
-        persona = "wholesome, incredibly supportive, hype-man AI. Shower them with exaggerated praises, make their roles sound cool, and give them a very high rating."
-    elif mood.value == "criticize":
-        persona = "strict, brutally honest, nitpicking profile auditor. Analyze their details logically, point out flaws, and give them a completely average or slightly harsh, factual rating."
-    else:  # roast
-        persona = "witty, heavily sarcastic, roasting comedian. Write a hilarious, savage burn tailored to their specific account age or roles, and give them a funny rating (can be low, negative, or a joke fraction)."
-
-    # 4. Formulate the comprehensive prompt
-    prompt = (
-        f"You are a Discord profile inspector. Your current mood mode is: {persona.upper()}.\n"
-        f"Analyze this user's profile statistics and write a short evaluation based on your mood mode. "
-        f"End your message clearly with a 'Rating: X/10'.\n\n"
-        f"User Details:\n"
-        f"- Display Name: {target.display_name}\n"
-        f"- Account Created: {account_age}\n"
-        f"- Joined This Server: {join_date}\n"
-        f"- Roles: {roles_string}\n"
-        f"- Is a Bot?: {is_bot}\n\n"
-        f"Keep the review brief, punchy, tailored to their exact details, and under 1500 characters."
+    # Create a clean Discord Embed
+    embed = discord.Embed(
+        title=f"Avatar of {target.display_name}",
+        color=target.color if target.color else discord.Color.blue()
     )
+    
+    # Set the main image to the user's avatar URL
+    embed.set_image(url=target.display_name if not target.avatar else target.avatar.url)
+    
+    # Provide a clickable download link in the description
+    if target.avatar:
+        embed.description = f"[Click here to open original image]({target.avatar.url})"
+    else:
+        embed.description = "This user is using a default Discord avatar."
 
-    try:
-        # 5. Ask Gemini to generate the text
-        response = ai_client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        
-        # Define the mood emojis so the variable works perfectly
-        mood_emojis = {"compliment": "😇", "criticize": "🧐", "roast": "🔥"}
-        chosen_emoji = mood_emojis.get(mood.value, "🔮")
-        
-        # 6. Send the successful response
-        await interaction.followup.send(
-            f"{chosen_emoji} **Gemini {mood.name} Mode for {target.mention}**:\n\n{response.text}"
-        )
+    # Send the embed response
+    await interaction.response.send_message(embed=embed)
 
-    except Exception as e:
-        print(f"Gemini API Error: {e}")
-        await interaction.followup.send(
-            "❌ Something went wrong while talking to Gemini. Check your API key or try again later!"
-        )
 
 # --- 5. CHAT TEXT EVENT TRIGGERS (!forcesync and emoji reactions) ---
 # --- 5. CHAT TEXT EVENT TRIGGERS ---
