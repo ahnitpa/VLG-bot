@@ -207,6 +207,54 @@ async def avatar(interaction: discord.Interaction, target: discord.Member = None
     # Send the embed response
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="whois", description="View detailed profile and account information for a server member.")
+@app_commands.describe(target="The server member you want to inspect")
+async def whois(interaction: discord.Interaction, target: discord.Member = None):
+    # If no target is specified, default to the user who ran the command
+    if target is None:
+        target = interaction.user
+
+    # Format dates cleanly into Day-Month-Year format
+    account_created = target.created_at.strftime("%d %b %Y")
+    server_joined = target.joined_at.strftime("%d %b %Y") if target.joined_at else "Unknown"
+
+    # Filter out the default @everyone role and limit display to avoid messy walls of text
+    roles = [role.mention for role in target.roles if role.name != "@everyone"]
+    roles_display = " ".join(roles) if roles else "No special roles"
+
+    # Determine key account permissions to feature
+    status_tags = []
+    if target.guild_permissions.administrator:
+        status_tags.append("Administrator")
+    elif target.guild_permissions.manage_guild:
+        status_tags.append("Server Manager")
+    elif target.guild_permissions.kick_members or target.guild_permissions.ban_members:
+        status_tags.append("Moderator")
+    
+    if target.bot:
+        status_tags.append("Bot Account")
+    
+    status_display = ", ".join(status_tags) if status_tags else "Regular Member"
+
+    # Assemble the profile embed card
+    embed = discord.Embed(
+        title=f"User Info - {target.name}#{target.discriminator if target.discriminator != '0' else ''}",
+        color=target.color if target.color else discord.Color.blue()
+    )
+    
+    # Add data fields
+    embed.set_thumbnail(url=target.avatar.url if target.avatar else target.default_avatar.url)
+    embed.add_field(name="Display Name", value=target.mention, inline=True)
+    embed.add_field(name="Account ID", value=f"`{target.id}`", inline=True)
+    embed.add_field(name="Server Status", value=status_display, inline=True)
+    embed.add_field(name="Created On", value=account_created, inline=True)
+    embed.add_field(name="Joined Server", value=server_joined, inline=True)
+    embed.add_field(name=f"Roles ({len(roles)})", value=roles_display, inline=False)
+    
+    embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+
+    await interaction.response.send_message(embed=embed)
+
 
 # --- 5. CHAT TEXT EVENT TRIGGERS (!forcesync and emoji reactions) ---
 # --- 5. CHAT TEXT EVENT TRIGGERS ---
