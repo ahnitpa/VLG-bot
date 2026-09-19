@@ -186,7 +186,7 @@ async def roast(interaction: discord.Interaction, target: discord.Member):
     await interaction.response.send_message(f"🔥 **BOOM!** {target.mention}, {chosen_roast}")
 
 # Initialize the Gemini API client using the variable you defined earlier (wrapped in quotes)
-ai_client = genai.Client(api_key='AQ.Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw')
+ai_client = genai.Client(api_key='AIzaSy-Ab8RN6IBy208MvBCFAC77i5Txsc_q4i-ntYPO6FghL8X3xoVgw')
 
 @bot.tree.command(name="rateprofile", description="Let Gemini AI judge a member's profile based on your chosen mood!")
 @app_commands.describe(
