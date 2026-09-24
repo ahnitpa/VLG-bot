@@ -1,6 +1,7 @@
 import random
 import discord
 from discord import app_commands
+from discord.ext import commands
 from threading import Thread
 from flask import Flask
 from datetime import timedelta
