@@ -6,8 +6,11 @@ from threading import Thread
 from flask import Flask
 from datetime import timedelta
 
+# Define your specific server ID here
+SERVER_ID = 1478447010284568781
+MY_SERVER = discord.Object(id=1478447010284568781)
+
 intents = discord.Intents.default()
-# Note: You MUST enable guild intents to read guild/server details accurately
 intents.guilds = True 
 
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -16,19 +19,18 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     print(f'Logged in as {bot.user.name}')
     try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
+        # Copy the global commands to your specific test guild for instant syncing
+        bot.tree.copy_global_to(guild=MY_SERVER)
+        synced = await bot.tree.sync(guild=MY_SERVER)
+        print(f"Synced {len(synced)} command(s) instantly to server {SERVER_ID}")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
 
-# 1. Create a custom check function for Server Owner
 def is_server_owner():
     async def predicate(interaction: discord.Interaction) -> bool:
-        # Check if the command user's ID matches the server owner's ID
         if interaction.user.id == interaction.guild.owner_id:
             return True
         
-        # If they aren't the owner, send a private error message
         await interaction.response.send_message(
             "take your bags / Only the server owner can use this command.", 
             ephemeral=True
@@ -36,10 +38,9 @@ def is_server_owner():
         return False
     return app_commands.check(predicate)
 
-# 2. Apply the check to your slash command
-@bot.tree.command(name="setstatus", description="Change the bot's playing status (Server Owner Only)")
+@bot.tree.command(name="setstatus", description="Change the bot's playing status")
 @app_commands.describe(text="The text you want the bot to display")
-@is_server_owner() # <--- This enforces the restriction
+@is_server_owner() 
 async def setstatus(interaction: discord.Interaction, text: str):
     await bot.change_presence(activity=discord.Game(name=text))
     await interaction.response.send_message(
@@ -47,15 +48,13 @@ async def setstatus(interaction: discord.Interaction, text: str):
         ephemeral=True
     )
 
-# 3. Optional: Global error handler to catch failed checks silently in console
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    # This prevents the terminal from printing messy CheckFailure errors since your predicate handles it
     if isinstance(error, app_commands.CheckFailure):
-        # We already handled the message inside the check function, so we pass
-        pass
+        return
     else:
         print(f"An unexpected error occurred: {error}")
-
 
 # --- 1. THE WEB SERVER (RENDER FREE TIER TRICK) ---
 app = Flask('')
