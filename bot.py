@@ -373,5 +373,4 @@ def keep_alive():
 # ====================== START ======================
 if __name__ == "__main__":
     keep_alive()
-    bot.run(MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q
-)
+    bot.run("MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q")
