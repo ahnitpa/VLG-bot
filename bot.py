@@ -54,7 +54,7 @@ async def on_message(message: discord.Message):
     # Force sync command (owner only)
     if message.content.lower() == "!forcesync":
         if message.author.id != message.guild.owner_id:
-            await message.channel.send("❌ **Access Denied:** Server Owner only.")
+            await message.channel.send("Server owner only (error code 1).")
             return
 
         status = await message.channel.send("🔄 Forcing command sync...")
@@ -118,7 +118,7 @@ async def gamble(interaction: discord.Interaction):
     role = interaction.guild.get_role(ROLE_ID)
 
     if not role:
-        await interaction.response.send_message("❌ The target role was not found.", ephemeral=True)
+        await interaction.response.send_message("The target role was not found (error code 3)", ephemeral=True)
         return
 
     if role in member.roles:
@@ -130,16 +130,16 @@ async def gamble(interaction: discord.Interaction):
         try:
             await member.add_roles(role)
             await interaction.response.send_message(
-                f"🎉 **Lucky!** You rolled a {roll}/5 and won the **{role.name}** role!"
+                f"**Lucky!** You rolled a {roll}/5 and won the **{role.name}** role!"
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                "❌ I don't have permission. Drag my bot role **above** the target role!",
+                "I don't have permission to give that role. Contact bot developer or drag the bot role higher then the target role. (error code 3)",
                 ephemeral=True
             )
     else:
         await interaction.response.send_message(
-            f"❌ **Unlucky!** You rolled a {roll}/5. Try again next time!",
+            f"**Unlucky!** You rolled a {roll}/5. Try again next time!",
             ephemeral=True
         )
 
@@ -147,7 +147,7 @@ async def gamble(interaction: discord.Interaction):
 async def gamble_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
         await interaction.response.send_message(
-            f"⏳ Slow down! Try again in **{error.retry_after:.1f}** seconds.",
+            f"Slow down! Try again in **{error.retry_after:.1f}** seconds. (error code 4)",
             ephemeral=True
         )
     else:
@@ -164,7 +164,7 @@ async def say(interaction: discord.Interaction, message: str):
 async def say_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message(
-            "**Access Denied!** You need `Administrator` permissions.",
+            "**Access Denied!** You need `Administrator` permissions. (error code 6)",
             ephemeral=True
         )
     else:
@@ -184,14 +184,14 @@ async def coinflip(interaction: discord.Interaction):
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                "🪙 **Tails!** You should be timed out, but your permissions protected you."
+                "🪙 **Tails!** You should be timed out, but your Administrator permissions protected you. (error code 7)"
             )
 
 @tree.command(name="steal", description="Attempt to steal imaginary coins from a server member!")
 @app_commands.describe(target="The server member you want to rob")
 async def steal(interaction: discord.Interaction, target: discord.Member):
     if target == interaction.user:
-        await interaction.response.send_message("You tried robbing yourself...", ephemeral=True)
+        await interaction.response.send_message("You tried robbing yourself... (error code 8)", ephemeral=True)
         return
     if target == bot.user:
         await interaction.response.send_message("Firewall completely vaporized your wallet.", ephemeral=True)
@@ -200,11 +200,11 @@ async def steal(interaction: discord.Interaction, target: discord.Member):
     if random.choice(["success", "fail"]) == "success":
         amount = random.randint(100, 1000)
         await interaction.response.send_message(
-            f"💰 **Success!** {interaction.user.mention} stole **{amount} coins** from {target.mention}!"
+            f"**Success!** {interaction.user.mention} stole **{amount} coins** from {target.mention}!"
         )
     else:
         await interaction.response.send_message(
-            f"🚨 **BUSTED!** {interaction.user.mention} tried to rob {target.mention} and got thrown into imaginary jail!"
+            f"**BUSTED!** {interaction.user.mention} tried to rob {target.mention} and got thrown into imaginary jail!"
         )
 
 @tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
@@ -215,31 +215,31 @@ async def rate(interaction: discord.Interaction, thing: str):
     if score <= 3:
         comments = ["Absolutely tragic. Delete this.", "This is so bad it almost crashed my servers."]
     elif score <= 7:
-        comments = ["Perfectly mid.", "Decent effort."]
+        comments = ["It's oki.", "Decent effort."]
     else:
-        comments = ["Magnificent! I'm impressed.", "100% cloud-approved excellence."]
+        comments = ["Magnificent! I'm impressed.", "Amazing"]
 
     await interaction.response.send_message(
         f"**Judgement Time!**\n"
         f"**Thing:** {thing}\n"
         f"**Rating:** `{score}/10`\n"
-        f'💬 *"{random.choice(comments)}"*'
+        f'*"{random.choice(comments)}"*'
     )
 
 @tree.command(name="8ball", description="Ask the Magic 8-Ball a question")
 @app_commands.describe(question="The question you want answered")
 async def eightball(interaction: discord.Interaction, question: str):
     responses = [
-        "🟢 Absolutely yes.",
-        "🟢 Signs point to yes.",
-        "💡 Try again later.",
-        "🔴 Don't count on it.",
-        "🔴 Don't do it!"
+        "Absolutely yes.",
+        "Signs point to yes.",
+        "Try again later.",
+        "Don't count on it.",
+        "Don't do it!"
     ]
     await interaction.response.send_message(
-        f"🔮 **The Magic 8-Ball**\n"
-        f"❓ **Question:** {question}\n"
-        f"💬 **Answer:** {random.choice(responses)}"
+        f"**The Magic 8-Ball**\n"
+        f"**Question:** {question}\n"
+        f"**Answer:** {random.choice(responses)}"
     )
 
 @tree.command(name="slap", description="Slap a server member with a random object!")
@@ -247,18 +247,18 @@ async def eightball(interaction: discord.Interaction, question: str):
 async def slap(interaction: discord.Interaction, target: discord.Member):
     if target == interaction.user:
         await interaction.response.send_message(
-            f"🤕 {interaction.user.mention} tried to slap themselves but missed."
+            f" {interaction.user.mention} tried to slap themselves but missed."
         )
         return
 
     items = [
-        "a giant wet trout 🐟",
-        "a broken keyboard ⌨️",
-        "a stale baguette 🥖",
-        "a comically large rubber duck 🦆"
+        "a giant wet trout",
+        "a broken keyboard",
+        "a stale baguette",
+        "a comically large rubber duck"
     ]
     await interaction.response.send_message(
-        f"💥 **WHACK!** {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!"
+        f"**WHACK!** {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!"
     )
 
 @tree.command(name="roast", description="Hit a fellow server member with a funny roast!")
@@ -266,27 +266,27 @@ async def slap(interaction: discord.Interaction, target: discord.Member):
 async def roast(interaction: discord.Interaction, target: discord.Member):
     if target == interaction.user:
         await interaction.response.send_message(
-            f"🥺 {interaction.user.mention}, you can't roast yourself!",
+            f" {interaction.user.mention}, you can't roast yourself!",
             ephemeral=True
         )
         return
     if target == bot.user:
-        await interaction.response.send_message("You can't roast bots.", ephemeral=True)
+        await interaction.response.send_message("You can't roast bots. (error code 9)", ephemeral=True)
         return
 
     roasts = [
         "is the type of person who pushes a door that clearly says 'Pull'.",
-        "looks like a person who claps when the airplane lands. ✈️",
+        "looks like a person who claps when the airplane lands.",
         "probably types with their two index fingers while looking at the keyboard.",
-        "has the emotional stability of an expired carton of milk. 🥛",
+        "has the emotional stability of an expired carton of milk.",
         "is the human equivalent of a participation trophy.",
-        "looks like they remind the teacher to assign homework right before the bell. 🔔",
+        "looks like they remind the teacher to assign homework right before the bell.",
         "probably puts milk in the bowl before the cereal. Absolutely criminal.",
         "is like software update notifications—annoying and always showing up at the worst time."
     ]
 
     await interaction.response.send_message(
-        f"🔥 **BOOM!** {target.mention}, {random.choice(roasts)}"
+        f" {target.mention}, {random.choice(roasts)}"
     )
 
 @tree.command(name="avatar", description="Fetch a user's profile picture")
@@ -305,7 +305,7 @@ async def avatar(interaction: discord.Interaction, target: discord.Member = None
         embed.description = f"[Open original image]({target.avatar.url})"
     else:
         embed.set_image(url=target.default_avatar.url)
-        embed.description = "This user is using the default Discord avatar."
+        embed.description = "This user is using the default Discord avatar. (error code 5)"
 
     await interaction.response.send_message(embed=embed)
 
