@@ -1,3 +1,7 @@
+# VLG (BETA)
+
+# This code was Clarified by Claude.
+# This code has notes on every command in this code, so you dont get lost in all of the lines of code. (‾◡◝)
 import random
 from datetime import timedelta
 from threading import Thread
@@ -7,7 +11,7 @@ from discord import app_commands
 from flask import Flask
 
 # ====================== CONFIG ======================
-TOKEN = "MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"          # ← Put your real token here
+TOKEN = "MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"          # Put your real discord token here (✿◡‿◡)
 SERVER_ID = 1478447010284568781
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1548670697486688358
@@ -29,7 +33,7 @@ def is_server_owner():
         if interaction.user.id == interaction.guild.owner_id:
             return True
         await interaction.response.send_message(
-            "Only the server owner can use this command.",
+            "Only the server owner can use this command. (error code #1)",
             ephemeral=True
         )
         return False
@@ -66,12 +70,12 @@ async def on_message(message: discord.Message):
     # Reply when the bot is mentioned
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         try:
-            await message.reply("Haiiii :3")
+            await message.reply("Hi")
             return
         except discord.Forbidden:
             pass
 
-    # Random interrupter (10% chance)
+    # Random interrupter (aka random reply) (10% chance)
     if random.random() < 0.10:
         funny_responses = [
             "UHM. no.",
@@ -88,10 +92,11 @@ async def on_message(message: discord.Message):
         except discord.Forbidden:
             pass
 
-    # React to the word "gamble"
+    # React to the word "gamble" 🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰
     if "gamble" in message.content.lower():
         try:
             emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
+# this is if you want a custom emoji reaction - leave (CUSTOM_EMOJI_ID) for NO custom emoji
             if emoji:
                 await message.add_reaction(emoji)
             else:
@@ -100,6 +105,8 @@ async def on_message(message: discord.Message):
             pass
 
 # ====================== SLASH COMMANDS ======================
+
+# SET STATUS COMMAND. FOR SERVER OWNERS ONLY.
 
 @tree.command(name="setstatus", description="Change the bot's playing status")
 @app_commands.describe(text="The text you want the bot to display")
@@ -110,6 +117,8 @@ async def setstatus(interaction: discord.Interaction, text: str):
         f"Status successfully updated to: **Playing {text}**",
         ephemeral=True
     )
+
+# /GAMBLE COMMAND 🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰
 
 @tree.command(name="gamble", description="Take a 1-in-5 chance to win a special role!")
 @app_commands.checks.cooldown(1, 60.0, key=lambda i: i.user.id)
@@ -122,7 +131,7 @@ async def gamble(interaction: discord.Interaction):
         return
 
     if role in member.roles:
-        await interaction.response.send_message("You already have this role!", ephemeral=True)
+        await interaction.response.send_message("You already have this role! (error code *e10*)", ephemeral=True)
         return
 
     roll = random.randint(1, 5)
@@ -153,6 +162,8 @@ async def gamble_error(interaction: discord.Interaction, error: app_commands.App
     else:
         raise error
 
+# /SAY COMMAND; MAKE A BOT REPEAT WHAT YOU WROTE
+
 @tree.command(name="say", description="Make the bot repeat a message")
 @app_commands.describe(message="The text you want the bot to say")
 @app_commands.checks.has_permissions(administrator=True)
@@ -169,6 +180,8 @@ async def say_error(interaction: discord.Interaction, error: app_commands.AppCom
         )
     else:
         raise error
+
+# SUSPICIOUS COINFLIP
 
 @tree.command(name="coinflip", description="Flip a coin. Heads you win, Tails you get timed out for 1 minute!")
 async def coinflip(interaction: discord.Interaction):
@@ -187,6 +200,8 @@ async def coinflip(interaction: discord.Interaction):
                 "🪙 **Tails!** You should be timed out, but your Administrator permissions protected you. (error code 7)"
             )
 
+# STEAL IMAGINARY COINS THAT DOESN'T EVEN EXIST (LMAO)
+
 @tree.command(name="steal", description="Attempt to steal imaginary coins from a server member!")
 @app_commands.describe(target="The server member you want to rob")
 async def steal(interaction: discord.Interaction, target: discord.Member):
@@ -194,7 +209,7 @@ async def steal(interaction: discord.Interaction, target: discord.Member):
         await interaction.response.send_message("You tried robbing yourself... (error code 8)", ephemeral=True)
         return
     if target == bot.user:
-        await interaction.response.send_message("Firewall completely vaporized your wallet.", ephemeral=True)
+        await interaction.response.send_message("Firewall completely vaporized your wallet. (error code *e11*)", ephemeral=True)
         return
 
     if random.choice(["success", "fail"]) == "success":
@@ -204,8 +219,10 @@ async def steal(interaction: discord.Interaction, target: discord.Member):
         )
     else:
         await interaction.response.send_message(
-            f"**BUSTED!** {interaction.user.mention} tried to rob {target.mention} and got thrown into imaginary jail!"
+            f"**CAUGHT STEALING!** {interaction.user.mention} tried to rob {target.mention} and got thrown into imaginary jail!"
         )
+
+# RANDOM RATING (THIS THING RATED THE CODE 6/10 BTW)
 
 @tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
 @app_commands.describe(thing="The object, person, or idea you want rated")
@@ -226,6 +243,8 @@ async def rate(interaction: discord.Interaction, thing: str):
         f'*"{random.choice(comments)}"*'
     )
 
+# 8BALL. NOTHING REALLY IMPRESSIVE, THE CODE ISNT STOLEN TRUST ME :D
+
 @tree.command(name="8ball", description="Ask the Magic 8-Ball a question")
 @app_commands.describe(question="The question you want answered")
 async def eightball(interaction: discord.Interaction, question: str):
@@ -241,6 +260,8 @@ async def eightball(interaction: discord.Interaction, question: str):
         f"**Question:** {question}\n"
         f"**Answer:** {random.choice(responses)}"
     )
+
+# SLAP YOUR FRIEND WITH 3 RANDOM OBJECTS. MY FAV IS BROKEN KEYBOARD. LMAO.
 
 @tree.command(name="slap", description="Slap a server member with a random object!")
 @app_commands.describe(target="The server member you want to slap")
@@ -261,17 +282,19 @@ async def slap(interaction: discord.Interaction, target: discord.Member):
         f"**WHACK!** {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!"
     )
 
+# /ROAST YOUR GF AND GO DRINK WATER.
+
 @tree.command(name="roast", description="Hit a fellow server member with a funny roast!")
 @app_commands.describe(target="The server member you want to roast")
 async def roast(interaction: discord.Interaction, target: discord.Member):
     if target == interaction.user:
         await interaction.response.send_message(
-            f" {interaction.user.mention}, you can't roast yourself!",
+            f" {interaction.user.mention}, roasting error go read the (error code *e12*) in the error guide.",
             ephemeral=True
         )
         return
     if target == bot.user:
-        await interaction.response.send_message("You can't roast bots. (error code 9)", ephemeral=True)
+        await interaction.response.send_message("You can't roast bots.. Not on discord.. (error code 9)", ephemeral=True)
         return
 
     roasts = [
@@ -288,6 +311,8 @@ async def roast(interaction: discord.Interaction, target: discord.Member):
     await interaction.response.send_message(
         f" {target.mention}, {random.choice(roasts)}"
     )
+
+# AVATAR SNATCHER. VERY USEFULL TO STEAL ANIME PICS.
 
 @tree.command(name="avatar", description="Fetch a user's profile picture")
 @app_commands.describe(target="The server member (leave empty for yourself)")
@@ -308,6 +333,11 @@ async def avatar(interaction: discord.Interaction, target: discord.Member = None
         embed.description = "This user is using the default Discord avatar. (error code 5)"
 
     await interaction.response.send_message(embed=embed)
+
+# GET A DASHBOARD OF A USER. DON'T ABUSE IT ON YOUR GF. JUST SAYING.
+# hey... how can abuse it.. by @owo.pepper
+# fun fact: you can leave it empty for yourself!
+
 
 @tree.command(name="whois", description="View detailed profile information")
 @app_commands.describe(target="The server member (leave empty for yourself)")
@@ -350,7 +380,7 @@ async def whois(interaction: discord.Interaction, target: discord.Member = None)
 
     await interaction.response.send_message(embed=embed)
 
-# Global error handler for checks
+# error handler for checks
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CheckFailure):
@@ -371,6 +401,8 @@ def keep_alive():
     Thread(target=run_web_server, daemon=True).start()
 
 # ====================== START ======================
-if __name__ == "__main__":
-    keep_alive()
-    bot.run("MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q")
+# BOT MADE BY @snowcatgirl ON DISCORD AND CO-DEV @owo.pepper LOVE YALL ❤️						    
+if __name__ == "__main__":								                                 # There's only two discord tokens btw (‾◡◝)
+    keep_alive()									                                     # To host your bot for free, you can use render.com with tips from gemini
+    bot.run("MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q")	 # Put your discord token here (✿◡‿◡)
+													
