@@ -67,16 +67,16 @@ async def on_message(message: discord.Message):
         await status.edit(content="✅ **Force-Sync Complete!** Commands refreshed.")
         return
 
-# Reply only when the bot is @mentioned
+# Reply only when the bot is explicitly @mentioned (not just replied to)
 if bot.user.mentioned_in(message) and not message.mention_everyone:
     # Check if the bot was actually typed as @BotName in the message
     if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
         try:
-            await message.reply("Hi")
+            await message.reply("Haiiii :3")
             return
         except discord.Forbidden:
             pass
-	
+
     # Random interrupter (aka random reply) (10% chance)
     if random.random() < 0.10:
         funny_responses = [
