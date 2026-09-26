@@ -1,0 +1,411 @@
+# OPEN SOURCE VERSION OF CODE. DO NOT USE THIS CODE FOR ANY TYPES OF SELLING AND OR EARNING.
+
+
+# VLG (BETA)
+
+# This code was Clarified by Claude.
+# This code has notes on every command in this code, so you dont get lost in all of the lines of code. (‾◡◝)
+import random
+from datetime import timedelta
+from threading import Thread
+
+import discord
+from discord import app_commands
+from flask import Flask
+
+# ====================== CONFIG ======================
+TOKEN = "DISCORD BOT TOKEN IN HERE"          # Put your real discord token here (✿◡‿◡)
+SERVER_ID = PUT THE SERVER ID
+ROLE_ID = ROLE ID FOR /GAMBLE
+CUSTOM_EMOJI_ID = PUT CUSTOM EMOJI ID IF NEEDED
+
+MY_SERVER = discord.Object(id=SERVER_ID)
+
+# ====================== BOT SETUP ======================
+intents = discord.Intents.default()
+intents.message_content = True          # needed for on_message
+intents.members = True                  # needed for roles, timeouts, whois, etc.
+intents.guilds = True
+
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
+
+# ====================== OWNER CHECK ======================
+def is_server_owner():
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if interaction.user.id == interaction.guild.owner_id:
+            return True
+        await interaction.response.send_message(
+            "Only the server owner can use this command. (error code #1)",
+            ephemeral=True
+        )
+        return False
+    return app_commands.check(predicate)
+
+# ====================== EVENTS ======================
+@bot.event
+async def on_ready():
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    try:
+        tree.copy_global_to(guild=MY_SERVER)
+        synced = await tree.sync(guild=MY_SERVER)
+        print(f"Synced {len(synced)} command(s) to server {SERVER_ID}")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
+
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author == bot.user or message.guild is None:
+        return
+
+    # Force sync command (owner only)
+    if message.content.lower() == "!forcesync":
+        if message.author.id != message.guild.owner_id:
+            await message.channel.send("Server owner only (error code 1).")
+            return
+
+        status = await message.channel.send("🔄 Forcing command sync...")
+        tree.copy_global_to(guild=MY_SERVER)
+        await tree.sync(guild=MY_SERVER)
+        await status.edit(content="✅ **Force-Sync Complete!** Commands refreshed.")
+        return
+
+    # Reply when the bot is mentioned
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
+        try:
+            await message.reply("Hi")
+            return
+        except discord.Forbidden:
+            pass
+
+    # Random interrupter (aka random reply) (10% chance)
+    if random.random() < 0.10:
+        funny_responses = [
+            "UHM. no.",
+            "Yeah",
+            "silly.",
+            "Sir, this is a Wendy's.",
+            "what",
+            "funny one.",
+            "idk.",
+            "why."
+        ]
+        try:
+            await message.reply(random.choice(funny_responses))
+        except discord.Forbidden:
+            pass
+
+    # React to the word "gamble" 🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰
+    if "gamble" in message.content.lower():
+        try:
+            emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
+# this is if you want a custom emoji reaction - leave (CUSTOM_EMOJI_ID) for NO custom emoji
+            if emoji:
+                await message.add_reaction(emoji)
+            else:
+                await message.add_reaction("❤️")
+        except discord.Forbidden:
+            pass
+
+# ====================== SLASH COMMANDS ======================
+
+# SET STATUS COMMAND. FOR SERVER OWNERS ONLY.
+
+@tree.command(name="setstatus", description="Change the bot's playing status")
+@app_commands.describe(text="The text you want the bot to display")
+@is_server_owner()
+async def setstatus(interaction: discord.Interaction, text: str):
+    await bot.change_presence(activity=discord.Game(name=text))
+    await interaction.response.send_message(
+        f"Status successfully updated to: **Playing {text}**",
+        ephemeral=True
+    )
+
+# /GAMBLE COMMAND 🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰
+
+@tree.command(name="gamble", description="Take a 1-in-5 chance to win a special role!")
+@app_commands.checks.cooldown(1, 60.0, key=lambda i: i.user.id)
+async def gamble(interaction: discord.Interaction):
+    member = interaction.user
+    role = interaction.guild.get_role(ROLE_ID)
+
+    if not role:
+        await interaction.response.send_message("The target role was not found (error code 3)", ephemeral=True)
+        return
+
+    if role in member.roles:
+        await interaction.response.send_message("You already have this role! (error code *e10*)", ephemeral=True)
+        return
+
+    roll = random.randint(1, 5)
+    if roll == 1:
+        try:
+            await member.add_roles(role)
+            await interaction.response.send_message(
+                f"**Lucky!** You rolled a {roll}/5 and won the **{role.name}** role!"
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "I don't have permission to give that role. Contact bot developer or drag the bot role higher then the target role. (error code 3)",
+                ephemeral=True
+            )
+    else:
+        await interaction.response.send_message(
+            f"**Unlucky!** You rolled a {roll}/5. Try again next time!",
+            ephemeral=True
+        )
+
+@gamble.error
+async def gamble_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        await interaction.response.send_message(
+            f"Slow down! Try again in **{error.retry_after:.1f}** seconds. (error code 4)",
+            ephemeral=True
+        )
+    else:
+        raise error
+
+# /SAY COMMAND; MAKE A BOT REPEAT WHAT YOU WROTE
+
+@tree.command(name="say", description="Make the bot repeat a message")
+@app_commands.describe(message="The text you want the bot to say")
+@app_commands.checks.has_permissions(administrator=True)
+async def say(interaction: discord.Interaction, message: str):
+    await interaction.response.send_message("Sending message...", ephemeral=True)
+    await interaction.channel.send(message)
+
+@say.error
+async def say_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message(
+            "**Access Denied!** You need `Administrator` permissions. (error code 6)",
+            ephemeral=True
+        )
+    else:
+        raise error
+
+# SUSPICIOUS COINFLIP
+
+@tree.command(name="coinflip", description="Flip a coin. Heads you win, Tails you get timed out for 1 minute!")
+async def coinflip(interaction: discord.Interaction):
+    result = random.choice(["Heads", "Tails"])
+
+    if result == "Heads":
+        await interaction.response.send_message("🪙 **Heads!** You lucked out. You survive... for now.")
+    else:
+        try:
+            await interaction.user.timeout(timedelta(seconds=60), reason="Lost the coinflip")
+            await interaction.response.send_message(
+                "🪙 **Tails!** Enjoy your **1-minute timeout**! :D"
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "🪙 **Tails!** You should be timed out, but your Administrator permissions protected you. (error code 7)"
+            )
+
+# STEAL IMAGINARY COINS THAT DOESN'T EVEN EXIST (LMAO)
+
+@tree.command(name="steal", description="Attempt to steal imaginary coins from a server member!")
+@app_commands.describe(target="The server member you want to rob")
+async def steal(interaction: discord.Interaction, target: discord.Member):
+    if target == interaction.user:
+        await interaction.response.send_message("You tried robbing yourself... (error code 8)", ephemeral=True)
+        return
+    if target == bot.user:
+        await interaction.response.send_message("Firewall completely vaporized your wallet. (error code *e11*)", ephemeral=True)
+        return
+
+    if random.choice(["success", "fail"]) == "success":
+        amount = random.randint(100, 1000)
+        await interaction.response.send_message(
+            f"**Success!** {interaction.user.mention} stole **{amount} coins** from {target.mention}!"
+        )
+    else:
+        await interaction.response.send_message(
+            f"**CAUGHT STEALING!** {interaction.user.mention} tried to rob {target.mention} and got thrown into imaginary jail!"
+        )
+
+# RANDOM RATING (THIS THING RATED THE CODE 6/10 BTW)
+
+@tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
+@app_commands.describe(thing="The object, person, or idea you want rated")
+async def rate(interaction: discord.Interaction, thing: str):
+    score = random.randint(0, 10)
+
+    if score <= 3:
+        comments = ["Absolutely tragic. Delete this.", "This is so bad it almost crashed my servers."]
+    elif score <= 7:
+        comments = ["It's oki.", "Decent effort."]
+    else:
+        comments = ["Magnificent! I'm impressed.", "Amazing"]
+
+    await interaction.response.send_message(
+        f"**Judgement Time!**\n"
+        f"**Thing:** {thing}\n"
+        f"**Rating:** `{score}/10`\n"
+        f'*"{random.choice(comments)}"*'
+    )
+
+# 8BALL. NOTHING REALLY IMPRESSIVE, THE CODE ISNT STOLEN TRUST ME :D
+
+@tree.command(name="8ball", description="Ask the Magic 8-Ball a question")
+@app_commands.describe(question="The question you want answered")
+async def eightball(interaction: discord.Interaction, question: str):
+    responses = [
+        "Absolutely yes.",
+        "Signs point to yes.",
+        "Try again later.",
+        "Don't count on it.",
+        "Don't do it!"
+    ]
+    await interaction.response.send_message(
+        f"**The Magic 8-Ball**\n"
+        f"**Question:** {question}\n"
+        f"**Answer:** {random.choice(responses)}"
+    )
+
+# SLAP YOUR FRIEND WITH 3 RANDOM OBJECTS. MY FAV IS BROKEN KEYBOARD. LMAO.
+
+@tree.command(name="slap", description="Slap a server member with a random object!")
+@app_commands.describe(target="The server member you want to slap")
+async def slap(interaction: discord.Interaction, target: discord.Member):
+    if target == interaction.user:
+        await interaction.response.send_message(
+            f" {interaction.user.mention} tried to slap themselves but missed."
+        )
+        return
+
+    items = [
+        "a giant wet trout",
+        "a broken keyboard",
+        "a stale baguette",
+        "a comically large rubber duck"
+    ]
+    await interaction.response.send_message(
+        f"**WHACK!** {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!"
+    )
+
+# /ROAST YOUR GF AND GO DRINK WATER.
+
+@tree.command(name="roast", description="Hit a fellow server member with a funny roast!")
+@app_commands.describe(target="The server member you want to roast")
+async def roast(interaction: discord.Interaction, target: discord.Member):
+    if target == interaction.user:
+        await interaction.response.send_message(
+            f" {interaction.user.mention}, roasting error go read the (error code *e12*) in the error guide.",
+            ephemeral=True
+        )
+        return
+    if target == bot.user:
+        await interaction.response.send_message("You can't roast bots.. Not on discord.. (error code 9)", ephemeral=True)
+        return
+
+    roasts = [
+        "is the type of person who pushes a door that clearly says 'Pull'.",
+        "looks like a person who claps when the airplane lands.",
+        "probably types with their two index fingers while looking at the keyboard.",
+        "has the emotional stability of an expired carton of milk.",
+        "is the human equivalent of a participation trophy.",
+        "looks like they remind the teacher to assign homework right before the bell.",
+        "probably puts milk in the bowl before the cereal. Absolutely criminal.",
+        "is like software update notifications—annoying and always showing up at the worst time."
+    ]
+
+    await interaction.response.send_message(
+        f" {target.mention}, {random.choice(roasts)}"
+    )
+
+# AVATAR SNATCHER. VERY USEFULL TO STEAL ANIME PICS.
+
+@tree.command(name="avatar", description="Fetch a user's profile picture")
+@app_commands.describe(target="The server member (leave empty for yourself)")
+async def avatar(interaction: discord.Interaction, target: discord.Member = None):
+    if target is None:
+        target = interaction.user
+
+    embed = discord.Embed(
+        title=f"Avatar of {target.display_name}",
+        color=target.color if target.color.value else discord.Color.blue()
+    )
+
+    if target.avatar:
+        embed.set_image(url=target.avatar.url)
+        embed.description = f"[Open original image]({target.avatar.url})"
+    else:
+        embed.set_image(url=target.default_avatar.url)
+        embed.description = "This user is using the default Discord avatar. (error code 5)"
+
+    await interaction.response.send_message(embed=embed)
+
+# GET A DASHBOARD OF A USER. DON'T ABUSE IT ON YOUR GF. JUST SAYING.
+# hey... how can abuse it.. by @owo.pepper
+# fun fact: you can leave it empty for yourself!
+
+
+@tree.command(name="whois", description="View detailed profile information")
+@app_commands.describe(target="The server member (leave empty for yourself)")
+async def whois(interaction: discord.Interaction, target: discord.Member = None):
+    if target is None:
+        target = interaction.user
+
+    account_created = target.created_at.strftime("%d %b %Y")
+    server_joined = target.joined_at.strftime("%d %b %Y") if target.joined_at else "Unknown"
+
+    roles = [role.mention for role in target.roles if role.name != "@everyone"]
+    roles_display = " ".join(roles[:15]) if roles else "No special roles"
+    if len(roles) > 15:
+        roles_display += f" (+{len(roles) - 15} more)"
+
+    status_tags = []
+    if target.guild_permissions.administrator:
+        status_tags.append("Administrator")
+    elif target.guild_permissions.manage_guild:
+        status_tags.append("Server Manager")
+    elif target.guild_permissions.kick_members or target.guild_permissions.ban_members:
+        status_tags.append("Moderator")
+    if target.bot:
+        status_tags.append("Bot Account")
+
+    status_display = ", ".join(status_tags) if status_tags else "Regular Member"
+
+    embed = discord.Embed(
+        title=f"User Info — {target}",
+        color=target.color if target.color.value else discord.Color.blue()
+    )
+    embed.set_thumbnail(url=target.display_avatar.url)
+    embed.add_field(name="Display Name", value=target.mention, inline=True)
+    embed.add_field(name="Account ID", value=f"`{target.id}`", inline=True)
+    embed.add_field(name="Status", value=status_display, inline=True)
+    embed.add_field(name="Created On", value=account_created, inline=True)
+    embed.add_field(name="Joined Server", value=server_joined, inline=True)
+    embed.add_field(name=f"Roles ({len(roles)})", value=roles_display, inline=False)
+    embed.set_footer(text=f"Requested by {interaction.user.display_name}")
+
+    await interaction.response.send_message(embed=embed)
+
+# error handler for checks
+@tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CheckFailure):
+        return  # already handled by the check
+    print(f"Unexpected error: {error}")
+
+# ====================== KEEP ALIVE (for hosting platforms) ======================
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is online and active!"
+
+def run_web_server():
+    app.run(host="0.0.0.0", port=8080)
+
+def keep_alive():
+    Thread(target=run_web_server, daemon=True).start()
+
+# ====================== START ======================
+# BOT MADE BY @snowcatgirl ON DISCORD AND CO-DEV @owo.pepper LOVE YALL ❤️						    
+if __name__ == "__main__":								                                 # There's only two discord tokens btw (‾◡◝)
+    keep_alive()									                                         # To host your bot for free, you can use render.com with tips from gemini
+    bot.run("YOUR DISCORD TOKEN")	 # Put your discord token here (✿◡‿◡)
+													
