@@ -41,16 +41,6 @@ def is_server_owner():
 
 # ====================== EVENTS ======================
 @bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    try:
-        tree.copy_global_to(guild=MY_SERVER)
-        synced = await tree.sync(guild=MY_SERVER)
-        print(f"Synced {len(synced)} command(s) to server {SERVER_ID}")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
-
-@bot.event
 async def on_message(message: discord.Message):
     if message.author == bot.user or message.guild is None:
         return
@@ -58,54 +48,50 @@ async def on_message(message: discord.Message):
     # Force sync command (owner only)
     if message.content.lower() == "!forcesync":
         if message.author.id != message.guild.owner_id:
-            await message.channel.send("Server owner only (error code 1).")
+            await message.channel.send("**Access Denied:** Server Owner only.")
             return
 
         status = await message.channel.send("🔄 Forcing command sync...")
         tree.copy_global_to(guild=MY_SERVER)
         await tree.sync(guild=MY_SERVER)
-        await status.edit(content="✅ **Force-Sync Complete!** Commands refreshed.")
+        await status.edit(content="**Force-Sync Complete!** Commands refreshed.")
         return
 
-# Reply only when the bot is explicitly @mentioned (not just replied to)
-if bot.user.mentioned_in(message) and not message.mention_everyone:
-    # Check if the bot was actually typed as @BotName in the message
-    if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
-        try:
-            await message.reply("Haiiii :3")
-            return
-        except discord.Forbidden:
-            pass
+    # Reply ONLY when the bot is explicitly @mentioned (not when someone just replies)
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
+        if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
+            try:
+                await message.reply("Hi")
+                return
+            except discord.Forbidden:
+                pass
 
-    # Random interrupter (aka random reply) (10% chance)
+    # Random interrupter (10% chance)
     if random.random() < 0.10:
         funny_responses = [
-            "UHM. no.",
             "Yeah",
             "silly.",
             "Sir, this is a Wendy's.",
             "what",
             "funny one.",
-            "idk.",
-            "why."
+            "why?"
         ]
         try:
             await message.reply(random.choice(funny_responses))
         except discord.Forbidden:
             pass
 
-    # React to the word "gamble" 🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰🎰
+    # React to the word "gamble"
     if "gamble" in message.content.lower():
         try:
             emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
-# this is if you want a custom emoji reaction - leave (CUSTOM_EMOJI_ID) for NO custom emoji
             if emoji:
                 await message.add_reaction(emoji)
             else:
                 await message.add_reaction("❤️")
         except discord.Forbidden:
             pass
-
+   
 # ====================== SLASH COMMANDS ======================
 
 # SET STATUS COMMAND. FOR SERVER OWNERS ONLY.
