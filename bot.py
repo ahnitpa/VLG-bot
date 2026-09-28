@@ -375,6 +375,168 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         return  # already handled by the check
     print(f"Unexpected error: {error}")
 
+# ====================== MODERATION COMMANDS ======================
+
+@tree.command(name="kick", description="Kick a member from the server")
+@app_commands.describe(member="The member to kick", reason="Reason for the kick")
+@app_commands.checks.has_permissions(kick_members=True)
+async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
+    if member == interaction.user:
+        return await interaction.response.send_message("You can't kick yourself.", ephemeral=True)
+    if member == interaction.guild.owner:
+        return await interaction.response.send_message("You can't kick the server owner.", ephemeral=True)
+    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        return await interaction.response.send_message("**You can't kick someone with equal or higher role than you.**", ephemeral=True)
+
+    try:
+        await member.kick(reason=f"{interaction.user} | {reason}")
+        await interaction.response.send_message(f"**{member}** has been kicked.\n**Reason:** {reason}")
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to kick this member. (error code e13)", ephemeral=True)
+
+
+@tree.command(name="ban", description="Ban a member from the server")
+@app_commands.describe(member="The member to ban", reason="Reason for the ban", delete_days="Delete messages from the last X days (0-7)")
+@app_commands.checks.has_permissions(ban_members=True)
+async def ban(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided", delete_days: app_commands.Range[int, 0, 7] = 0):
+    if member == interaction.user:
+        return await interaction.response.send_message("You can't ban yourself.", ephemeral=True)
+    if member == interaction.guild.owner:
+        return await interaction.response.send_message("You can't ban the server owner.", ephemeral=True)
+    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        return await interaction.response.send_message("You can't ban someone with equal or higher role than you. (error code e13)", ephemeral=True)
+
+    try:
+        await member.ban(reason=f"{interaction.user} | {reason}", delete_message_days=delete_days)
+        await interaction.response.send_message(f"**{member}** has been banned.\n**Reason:** {reason}")
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to ban this member. (error code #e14)", ephemeral=True)
+
+
+@tree.command(name="timeout", description="Timeout a member")
+@app_commands.describe(
+    member="The member to timeout",
+    minutes="How many minutes the timeout should last",
+    reason="Reason for the timeout"
+)
+@app_commands.checks.has_permissions(moderate_members=True)
+async def timeout(interaction: discord.Interaction, member: discord.Member, minutes: app_commands.Range[int, 1, 40320], reason: str = "No reason provided"):
+    if member == interaction.user:
+        return await interaction.response.send_message("You can't timeout yourself.", ephemeral=True)
+    if member == interaction.guild.owner:
+        return await interaction.response.send_message("You can't timeout the server owner.", ephemeral=True)
+    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+        return await interaction.response.send_message("You can't timeout someone with equal or higher role than you. (error code e13)", ephemeral=True)
+
+    duration = timedelta(minutes=minutes)
+    try:
+        await member.timeout(duration, reason=f"{interaction.user} | {reason}")
+        await interaction.response.send_message(
+            f"**{member}** has been timed out for **{minutes} minutes**.\n**Reason:** {reason}"
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to timeout this member. (error code #e14)", ephemeral=True)
+
+
+@tree.command(name="removetimeout", description="Remove timeout from a member")
+@app_commands.describe(member="The member to remove timeout from")
+@app_commands.checks.has_permissions(moderate_members=True)
+async def untimeout(interaction: discord.Interaction, member: discord.Member):
+    try:
+        await member.timeout(None)
+        await interaction.response.send_message(f"Timeout removed from **{member}**.")
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to remove the timeout. (error code #e14)", ephemeral=True)
+
+
+@tree.command(name="addrole", description="Give a role to a member")
+@app_commands.describe(member="The member", role="The role to give")
+@app_commands.checks.has_permissions(manage_roles=True)
+async def addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    if role >= interaction.guild.me.top_role:
+        return await interaction.response.send_message("That role is higher than my highest role. (error code #e14)", ephemeral=True)
+    if role in member.roles:
+        return await interaction.response.send_message(f"**{member}** already has the **{role.name}** role.", ephemeral=True)
+
+    try:
+        await member.add_roles(role, reason=f"Given by {interaction.user}")
+        await interaction.response.send_message(f"Gave **{role.name}** to **{member}**.")
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to manage that role. (error code #e14)", ephemeral=True)
+
+
+@tree.command(name="removerole", description="Remove a role from a member")
+@app_commands.describe(member="The member", role="The role to remove")
+@app_commands.checks.has_permissions(manage_roles=True)
+async def removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
+    if role >= interaction.guild.me.top_role:
+        return await interaction.response.send_message("That role is higher than my highest role. (error code #e14)", ephemeral=True)
+    if role not in member.roles:
+        return await interaction.response.send_message(f"**{member}** doesn't have the **{role.name}** role.", ephemeral=True)
+
+    try:
+        await member.remove_roles(role, reason=f"Removed by {interaction.user}")
+        await interaction.response.send_message(f"Removed **{role.name}** from **{member}**.")
+    except discord.Forbidden:
+        await interaction.response.send_message("I don't have permission to manage that role. (error code #e14)", ephemeral=True)
+
+
+# ====================== QnA COMMAND ======================
+
+@tree.command(name="qna", description="Get a random silly question about anything")
+@app_commands.describe(topic="Optional topic (leave empty for completely random)")
+async def qna(interaction: discord.Interaction, topic: str = None):
+    general_questions = [
+        "If you could have any superpower but it only worked on Tuesdays, what would it be?",
+        "Would you rather fight 100 duck-sized horses or 1 horse-sized duck?",
+        "What’s the weirdest thing you’ve ever eaten on purpose?",
+        "If animals could talk, which one would be the rudest?",
+        "What’s a conspiracy theory you half-believe?",
+        "If you had to rename yourself after a food, what would it be?",
+        "Would you rather always have to sing instead of talk, or dance instead of walk?",
+        "What’s the most useless talent you have?",
+        "If your life had a loading screen tip, what would it say?",
+        "What’s something that should be illegal but isn’t?",
+        "If you could only eat one color of food for the rest of your life, what color?",
+        "Would you rather have a pause button or a rewind button for your life?",
+        "What’s the dumbest way you’ve ever hurt yourself?",
+        "If ghosts were real, what would you do to annoy them?",
+        "What’s a hill you’re willing to die on that nobody else cares about?",
+    ]
+
+    topic_questions = {
+        "food": [
+            "What’s a food combination that sounds disgusting but is actually fire?",
+            "If you had to eat the same meal every day for a year, what would it be?",
+            "Pineapple on pizza: war crime or genius?",
+        ],
+        "gaming": [
+            "What’s the most rage-inducing game you’ve ever played?",
+            "If you could live in any game world, which one and why?",
+            "What’s a game mechanic that should exist but doesn’t?",
+        ],
+        "life": [
+            "What’s a piece of advice that actually made your life worse?",
+            "If you could restart your life at any age, which age would you pick?",
+            "What’s something everyone pretends to like but secretly hates?",
+        ]
+    }
+
+    if topic and topic.lower() in topic_questions:
+        question = random.choice(topic_questions[topic.lower()])
+    else:
+        question = random.choice(general_questions)
+
+    embed = discord.Embed(
+        title="Random Silly Question",
+        description=question,
+        color=discord.Color.random()
+    )
+    if topic:
+        embed.set_footer(text=f"Topic: {topic}")
+    
+    await interaction.response.send_message(embed=embed)
+	
 # ====================== KEEP ALIVE (for hosting platforms) ======================
 app = Flask("")
 
