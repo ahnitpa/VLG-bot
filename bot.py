@@ -523,6 +523,7 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
             "What’s something everyone pretends to like but secretly hates?",
         ]
     }
+	
 
     if topic and topic.lower() in topic_questions:
         question = random.choice(topic_questions[topic.lower()])
@@ -530,7 +531,7 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
         question = random.choice(general_questions)
 
     embed = discord.Embed(
-        title="🎲 Random Silly Question",
+        title="Random Silly Question",
         description=question,
         color=discord.Color.random()
     )
@@ -553,7 +554,8 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
         embed.set_footer(text=f"Topic: {topic}")
     
     await interaction.response.send_message(embed=embed)
-	
+
+
 # ====================== KEEP ALIVE (for hosting platforms) ======================
 app = Flask("")
 
