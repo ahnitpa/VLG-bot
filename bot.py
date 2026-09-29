@@ -483,9 +483,11 @@ async def removerole(interaction: discord.Interaction, member: discord.Member, r
 
 # ====================== QnA COMMAND ======================
 
+from typing import Optional   # make sure this is at the top with your other imports
+
 @tree.command(name="qna", description="Get a random silly question about anything")
 @app_commands.describe(topic="Optional topic (leave empty for completely random)")
-async def qna(interaction: discord.Interaction, topic: str = None):
+async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     general_questions = [
         "If you could have any superpower but it only worked on Tuesdays, what would it be?",
         "Would you rather fight 100 duck-sized horses or 1 horse-sized duck?",
@@ -522,6 +524,21 @@ async def qna(interaction: discord.Interaction, topic: str = None):
         ]
     }
 
+    if topic and topic.lower() in topic_questions:
+        question = random.choice(topic_questions[topic.lower()])
+    else:
+        question = random.choice(general_questions)
+
+    embed = discord.Embed(
+        title="🎲 Random Silly Question",
+        description=question,
+        color=discord.Color.random()
+    )
+    if topic:
+        embed.set_footer(text=f"Topic: {topic}")
+    
+    await interaction.response.send_message(embed=embed)
+	
     if topic and topic.lower() in topic_questions:
         question = random.choice(topic_questions[topic.lower()])
     else:
