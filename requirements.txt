@@ -1,3 +1,6 @@
+discord.py[voice]
+yt-dlp
+PyNaCl
 discord.py
 flask
 google-genai
