@@ -23,6 +23,7 @@ intents = discord.Intents.default()
 intents.message_content = True          # needed for on_message
 intents.members = True                  # needed for roles, timeouts, whois, etc.
 intents.guilds = True
+intents.voice_states = True				# voice channel join perms
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
@@ -554,6 +555,63 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
         embed.set_footer(text=f"Topic: {topic}")
     
     await interaction.response.send_message(embed=embed)
+
+=========================JOIN VOICE CHANNEL===========================
+
+@tree.command(name="join", description="Make the bot join your current voice channel")
+async def join(interaction: discord.Interaction):
+    # Check if the user is in a voice channel
+    if not interaction.user.voice or not interaction.user.voice.channel:
+        await interaction.response.send_message(
+            "❌ You need to be in a voice channel first!",
+            ephemeral=True
+        )
+        return
+
+    channel = interaction.user.voice.channel
+    voice_client = interaction.guild.voice_client
+
+    try:
+        if voice_client is None:
+            # Bot is not connected anywhere → join
+            await channel.connect()
+            await interaction.response.send_message(f"✅ Joined **{channel.name}**")
+        elif voice_client.channel == channel:
+            # Already in the same channel
+            await interaction.response.send_message(
+                "I'm already in your voice channel!",
+                ephemeral=True
+            )
+        else:
+            # Bot is in another channel → move
+            await voice_client.move_to(channel)
+            await interaction.response.send_message(f"Moved to **{channel.name}**")
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "❌ I don't have permission to join that voice channel.\n"
+            "Make sure I have **Connect** and **Speak** permissions.",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"Failed to join: `{e}` (most likely code error)",
+            ephemeral=True
+        )
+
+
+@tree.command(name="leave", description="Make the bot leave the voice channel")
+async def leave(interaction: discord.Interaction):
+    voice_client = interaction.guild.voice_client
+
+    if voice_client is None:
+        await interaction.response.send_message(
+            "I'm not in a voice channel.",
+            ephemeral=True
+        )
+        return
+
+    await voice_client.disconnect()
+    await interaction.response.send_message("Left the voice channel.")
 
 
 # ====================== KEEP ALIVE (for hosting platforms) ======================
