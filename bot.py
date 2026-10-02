@@ -556,7 +556,6 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     
     await interaction.response.send_message(embed=embed)
 
-=========================JOIN VOICE CHANNEL===========================
 
 @tree.command(name="join", description="Make the bot join your current voice channel")
 async def join(interaction: discord.Interaction):
