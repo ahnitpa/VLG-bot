@@ -5,7 +5,7 @@
 import random
 from datetime import timedelta
 from threading import Thread
-
+import yt_dlp
 import discord
 from discord import app_commands
 from flask import Flask
