@@ -10,6 +10,32 @@ import discord
 from discord import app_commands
 from flask import Flask
 
+# Music settings
+yt_dlp.utils.bug_reports_message = lambda: ''
+
+ytdl_format_options = {
+    'format': 'bestaudio/best',
+    'outtmpl': '%(extractor)s-%(id)s-%(title)s.%(ext)s',
+    'restrictfilenames': True,
+    'noplaylist': True,
+    'nocheckcertificate': True,
+    'ignoreerrors': False,
+    'logtostderr': False,
+    'quiet': True,
+    'no_warnings': True,
+    'default_search': 'auto',
+    'source_address': '0.0.0.0',
+}
+
+ffmpeg_options = {
+    'options': '-vn'
+}
+
+ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
+
+# Simple queue per guild
+queues = {}
+
 # ====================== CONFIG ======================
 TOKEN = "MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"          # Put your real discord token here (✿◡‿◡)
 SERVER_ID = 1478447010284568781
@@ -611,6 +637,108 @@ async def leave(interaction: discord.Interaction):
 
     await voice_client.disconnect()
     await interaction.response.send_message("Left the voice channel.")
+
+class YTDLSource(discord.PCMVolumeTransformer):
+    def __init__(self, source, *, data, volume=0.5):
+        super().__init__(source, volume)
+        self.data = data
+        self.title = data.get('title')
+        self.url = data.get('url')
+
+    @classmethod
+    async def from_url(cls, url, *, loop=None, stream=False):
+        loop = loop or asyncio.get_event_loop()
+        data = await loop.run_in_executor(None, lambda: ytdl.extract_info(url, download=not stream))
+
+        if 'entries' in data:
+            data = data['entries'][0]
+
+        filename = data['url'] if stream else ytdl.prepare_filename(data)
+        return cls(FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
+
+
+async def play_next(guild: discord.Guild):
+    """Play the next song in the queue"""
+    if guild.id in queues and queues[guild.id]:
+        voice_client = guild.voice_client
+        if voice_client is None:
+            return
+
+        url = queues[guild.id].pop(0)
+        try:
+            player = await YTDLSource.from_url(url, loop=bot.loop, stream=True)
+            voice_client.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(play_next(guild), bot.loop))
+            
+            # Optional: send a message when a new song starts
+            # You can improve this later by storing the channel
+        except Exception as e:
+            print(f"Error playing next song: {e}")
+            await play_next(guild)  # skip to next
+
+
+@tree.command(name="play", description="Play a song from YouTube (URL or search)")
+@app_commands.describe(query="YouTube URL or search term")
+async def play(interaction: discord.Interaction, query: str):
+    await interaction.response.defer()
+
+    # Make sure user is in a voice channel
+    if not interaction.user.voice or not interaction.user.voice.channel:
+        await interaction.followup.send("❌ You need to be in a voice channel!", ephemeral=True)
+        return
+
+    channel = interaction.user.voice.channel
+    voice_client = interaction.guild.voice_client
+
+    # Join if not already connected
+    try:
+        if voice_client is None:
+            voice_client = await channel.connect()
+        elif voice_client.channel != channel:
+            await voice_client.move_to(channel)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Could not join voice channel: `{e}`")
+        return
+
+    # Add to queue
+    if interaction.guild.id not in queues:
+        queues[interaction.guild.id] = []
+
+    queues[interaction.guild.id].append(query)
+
+    # If nothing is currently playing, start playing
+    if not voice_client.is_playing():
+        await play_next(interaction.guild)
+        await interaction.followup.send(f"▶️ **Now playing:** `{query}`")
+    else:
+        await interaction.followup.send(f"✅ Added to queue: `{query}`")
+
+
+@tree.command(name="skip", description="Skip the current song")
+async def skip(interaction: discord.Interaction):
+    voice_client = interaction.guild.voice_client
+
+    if voice_client is None or not voice_client.is_playing():
+        await interaction.response.send_message("Nothing is playing right now.", ephemeral=True)
+        return
+
+    voice_client.stop()  # This will trigger play_next
+    await interaction.response.send_message("⏭️ Skipped!")
+
+
+@tree.command(name="stop", description="Stop playing and clear the queue")
+async def stop(interaction: discord.Interaction):
+    voice_client = interaction.guild.voice_client
+
+    if voice_client is None:
+        await interaction.response.send_message("I'm not in a voice channel.", ephemeral=True)
+        return
+
+    # Clear queue
+    if interaction.guild.id in queues:
+        queues[interaction.guild.id].clear()
+
+    voice_client.stop()
+    await interaction.response.send_message("Stopped and cleared the queue.")
 
 
 # ====================== KEEP ALIVE (for hosting platforms) ======================
