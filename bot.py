@@ -624,4 +624,4 @@ if __name__ == "__main__":
         raise SystemExit("TOKEN environment variable is not set. Add it under Environment on Render.")
 
     keep_alive()
-    bot.run(TOKEN)
+    bot.run(MTU0ODY1MjUwNDY1NTMzMTQwOQ.G6E1j2.mz4zsuiXopjs6W3cqCVGkpQLCrYqpiPkAbFE38)
