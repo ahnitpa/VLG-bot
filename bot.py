@@ -571,10 +571,7 @@ def run_web_server():
 def keep_alive():
     Thread(target=run_web_server, daemon=True).start()
 
-
 # ====================== START ======================
-					    
-if __name__ == "__main__":								                                 
-    keep_alive()									                                     
-    bot.run("MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q")	 
-													
+if __name__ == "__main__":
+    keep_alive()
+    bot.run(os.environ["MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"])								
