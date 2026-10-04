@@ -12,7 +12,7 @@ from flask import Flask
 import os
 
 # ====================== CONFIG ======================
-TOKEN = "MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"          # Put your real discord token here (✿◡‿◡)
+TOKEN = "MTU0ODY1MjUwNDY1NTMzMTQwOQ.G6E1j2.mz4zsuiXopjs6W3cqCVGkpQLCrYqpiPkAbFE38"          # Put your real discord token here (✿◡‿◡)
 SERVER_ID = 1478447010284568781
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1548670697486688358
@@ -575,4 +575,4 @@ def keep_alive():
 # ====================== START ======================
 if __name__ == "__main__":
     keep_alive()
-   bot.run(os.environ["MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"])					
+   bot.run(os.environ["MTU0ODY1MjUwNDY1NTMzMTQwOQ.G6E1j2.mz4zsuiXopjs6W3cqCVGkpQLCrYqpiPkAbFE38"])					
