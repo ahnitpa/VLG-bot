@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 from flask import Flask
 import os
+import music
 
 # ====================== CONFIG ======================
 TOKEN = "MTU0ODY1MjUwNDY1NTMzMTQwOQ.G6E1j2.mz4zsuiXopjs6W3cqCVGkpQLCrYqpiPkAbFE38"          # Put your real discord token here (✿◡‿◡)
@@ -28,6 +29,12 @@ intents.voice_states = True				# voice channel join perms
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
+
+    await interaction.response.send_message(embed=embed)
+
+bot = discord.Client(intents=intents)
+tree = app_commands.CommandTree(bot)
+music.setup(bot, tree)
 
 # ====================== OWNER CHECK ======================
 def is_server_owner():
@@ -577,8 +584,6 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     if topic:
         embed.set_footer(text=f"Topic: {topic}")
     
-    await interaction.response.send_message(embed=embed)
-
 
 # ====================== KEEP ALIVE (for hosting platforms) ======================
 app = Flask("")
