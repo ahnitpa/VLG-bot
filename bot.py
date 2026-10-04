@@ -823,6 +823,21 @@ async def leave(interaction: discord.Interaction):
     await interaction.response.send_message("Left the voice channel.")
 
 
+# ====================== KEEP ALIVE (for hosting platforms) ======================
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is online and active!"
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+def keep_alive():
+    Thread(target=run_web_server, daemon=True).start()
+
+
 # ====================== START ======================
 					    
 if __name__ == "__main__":								                                 
