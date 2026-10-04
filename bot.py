@@ -44,10 +44,15 @@ ytdl_format_options = {
     'source_address': '0.0.0.0',
 }
 
-# If YouTube blocks your host, export cookies from a browser and
-# upload the file as cookies.txt next to your bot (see notes).
-if os.path.exists("cookies.txt"):
-    ytdl_format_options['cookiefile'] = 'cookies.txt'
+import shutil
+
+COOKIE_SRC = "/etc/secrets/cookies.txt"
+COOKIE_DST = "/tmp/cookies.txt"
+
+if os.path.exists(COOKIE_SRC):
+    shutil.copy(COOKIE_SRC, COOKIE_DST)
+    ytdl_format_options['cookiefile'] = COOKIE_DST
+
 
 ytdl = yt_dlp.YoutubeDL(ytdl_format_options)
 
