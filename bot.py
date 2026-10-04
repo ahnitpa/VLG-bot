@@ -9,6 +9,7 @@ import yt_dlp
 import discord
 from discord import app_commands
 from flask import Flask
+import os
 
 # ====================== CONFIG ======================
 TOKEN = "MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"          # Put your real discord token here (✿◡‿◡)
@@ -574,4 +575,4 @@ def keep_alive():
 # ====================== START ======================
 if __name__ == "__main__":
     keep_alive()
-    bot.run(os.environ["MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"])								
+   bot.run(os.environ["MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q"])					
