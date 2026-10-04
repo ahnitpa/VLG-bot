@@ -824,8 +824,8 @@ async def leave(interaction: discord.Interaction):
 
 
 # ====================== START ======================
-# BOT MADE BY @snowcatgirl ON DISCORD AND CO-DEV @owo.pepper LOVE YALL ❤️						    
-if __name__ == "__main__":								                                 # There's only two discord tokens btw (‾◡◝)
-    keep_alive()									                                     # To host your bot for free, you can use render.com with tips from gemini
-    bot.run("MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q")	 # Put your discord token here (✿◡‿◡)
+					    
+if __name__ == "__main__":								                                 
+    keep_alive()									                                     
+    bot.run("MTU0ODY1MjUwNDY1NTMzMTQwOQ.GqD8h1.6W1LyIbWtzjDY_wZ7Fh2nvyBnQ1qp5qp4Cdn7Q")	 
 													
