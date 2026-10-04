@@ -583,7 +583,7 @@ import yt_dlp
 from discord import app_commands
 from discord.abc import Messageable
 from discord.ext import commands
-from bot.cogs.checks import perms_or_developer
+from requirements.txt.checks import perms_or_developer
 
 from bot.services.music import (
     classify_ytdl_error,
