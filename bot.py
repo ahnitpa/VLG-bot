@@ -377,6 +377,28 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         return  # already handled by the check
     print(f"Unexpected error: {error}")
 
+@tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    import traceback
+    traceback.print_exception(type(error), error, error.__traceback__)
+
+    if isinstance(error, app_commands.MissingPermissions):
+        msg = "You don't have permission to use this command."
+    elif isinstance(error, app_commands.CommandOnCooldown):
+        msg = f"Slow down! Try again in {error.retry_after:.1f}s."
+    elif isinstance(error, app_commands.CheckFailure):
+        return  # the owner check already replied
+    else:
+        msg = f"Something went wrong: `{error}`"
+
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except discord.HTTPException:
+        pass
+
 # ====================== MODERATION COMMANDS ======================
 
 @tree.command(name="kick", description="Kick a member from the server")
