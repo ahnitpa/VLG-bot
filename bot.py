@@ -575,4 +575,4 @@ def keep_alive():
 # ====================== START ======================
 if __name__ == "__main__":
     keep_alive()
-   bot.run(os.environ["MTU0ODY1MjUwNDY1NTMzMTQwOQ.G6E1j2.mz4zsuiXopjs6W3cqCVGkpQLCrYqpiPkAbFE38"])					
+  bot.run("MTU0ODY1MjUwNDY1NTMzMTQwOQ.G6E1j2.mz4zsuiXopjs6W3cqCVGkpQLCrYqpiPkAbFE38")					
