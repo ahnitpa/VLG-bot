@@ -578,9 +578,7 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     )
     if topic:
         embed.set_footer(text=f"Topic: {topic}")
-		await interaction.response.send_message(embed=embed)
-
-    
+	await interaction.response.send_message(embed=embed)
 
 # ====================== KEEP ALIVE (for hosting platforms) ======================
 app = Flask("")
