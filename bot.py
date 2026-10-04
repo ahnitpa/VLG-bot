@@ -509,47 +509,44 @@ async def removerole(interaction: discord.Interaction, member: discord.Member, r
 
 # ====================== QnA COMMAND ======================
 
-from typing import Optional   # make sure this is at the top with your other imports
-
 @tree.command(name="qna", description="Get a random silly question about anything")
-@app_commands.describe(topic="Optional topic (leave empty for completely random)")
+@app_commands.describe(topic="Optional topic: food, gaming or life (leave empty for random)")
 async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     general_questions = [
         "If you could have any superpower but it only worked on Tuesdays, what would it be?",
         "Would you rather fight 100 duck-sized horses or 1 horse-sized duck?",
-        "What’s the weirdest thing you’ve ever eaten on purpose?",
+        "What's the weirdest thing you've ever eaten on purpose?",
         "If animals could talk, which one would be the rudest?",
-        "What’s a conspiracy theory you half-believe?",
+        "What's a conspiracy theory you half-believe?",
         "If you had to rename yourself after a food, what would it be?",
         "Would you rather always have to sing instead of talk, or dance instead of walk?",
-        "What’s the most useless talent you have?",
+        "What's the most useless talent you have?",
         "If your life had a loading screen tip, what would it say?",
-        "What’s something that should be illegal but isn’t?",
+        "What's something that should be illegal but isn't?",
         "If you could only eat one color of food for the rest of your life, what color?",
         "Would you rather have a pause button or a rewind button for your life?",
-        "What’s the dumbest way you’ve ever hurt yourself?",
+        "What's the dumbest way you've ever hurt yourself?",
         "If ghosts were real, what would you do to annoy them?",
-        "What’s a hill you’re willing to die on that nobody else cares about?",
+        "What's a hill you're willing to die on that nobody else cares about?",
     ]
 
     topic_questions = {
         "food": [
-            "What’s a food combination that sounds disgusting but is actually fire?",
+            "What's a food combination that sounds disgusting but is actually fire?",
             "If you had to eat the same meal every day for a year, what would it be?",
             "Pineapple on pizza: war crime or genius?",
         ],
         "gaming": [
-            "What’s the most rage-inducing game you’ve ever played?",
+            "What's the most rage-inducing game you've ever played?",
             "If you could live in any game world, which one and why?",
-            "What’s a game mechanic that should exist but doesn’t?",
+            "What's a game mechanic that should exist but doesn't?",
         ],
         "life": [
-            "What’s a piece of advice that actually made your life worse?",
+            "What's a piece of advice that actually made your life worse?",
             "If you could restart your life at any age, which age would you pick?",
-            "What’s something everyone pretends to like but secretly hates?",
-        ]
+            "What's something everyone pretends to like but secretly hates?",
+        ],
     }
-	
 
     if topic and topic.lower() in topic_questions:
         question = random.choice(topic_questions[topic.lower()])
@@ -563,22 +560,8 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     )
     if topic:
         embed.set_footer(text=f"Topic: {topic}")
-    
+
     await interaction.response.send_message(embed=embed)
-	
-    if topic and topic.lower() in topic_questions:
-        question = random.choice(topic_questions[topic.lower()])
-    else:
-        question = random.choice(general_questions)
-
-    embed = discord.Embed(
-        title="Random Silly Question",
-        description=question,
-        color=discord.Color.random()
-    )
-    if topic:
-        embed.set_footer(text=f"Topic: {topic}")
-		await interaction.response.send_message(embed=embed)
 
 # ====================== KEEP ALIVE (for hosting platforms) ======================
 app = Flask("")
