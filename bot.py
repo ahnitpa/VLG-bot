@@ -29,11 +29,6 @@ intents.voice_states = True				# voice channel join perms
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
-
-    await interaction.response.send_message(embed=embed)
-
-bot = discord.Client(intents=intents)
-tree = app_commands.CommandTree(bot)
 music.setup(bot, tree)
 
 # ====================== OWNER CHECK ======================
@@ -583,6 +578,8 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     )
     if topic:
         embed.set_footer(text=f"Topic: {topic}")
+		await interaction.response.send_message(embed=embed)
+
     
 
 # ====================== KEEP ALIVE (for hosting platforms) ======================
