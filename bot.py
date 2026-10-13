@@ -12,25 +12,20 @@ from flask import Flask
 import music
 
 # ====================== CONFIG ======================
-# The token is read from the TOKEN environment variable (set it on Render).
-SERVER_ID = 1478447010284568781
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1548670697486688358
 
-MY_SERVER = discord.Object(id=SERVER_ID)
-
 # ====================== BOT SETUP ======================
 intents = discord.Intents.default()
-intents.message_content = True      # needed for on_message
-intents.members = True              # needed for roles, timeouts, whois, etc.
+intents.message_content = True
+intents.members = True
 intents.guilds = True
-intents.voice_states = True         # needed for voice channels
+intents.voice_states = True
 
 bot = discord.Client(intents=intents)
 tree = app_commands.CommandTree(bot)
 
-# Registers /join /leave /play /pause /resume /stop /skip /queue /nowplaying
-# /volume /shuffle /loop /remove /clear /replay
+# Registers music commands
 music.setup(bot, tree)
 
 synced_once = False
@@ -56,13 +51,12 @@ async def on_ready():
     print(f"Logged in as {bot.user} ({bot.user.id})")
     print("Registered commands:", sorted(c.name for c in tree.get_commands()))
 
-    # Sync slash commands once per start so Discord always matches the code
     if not synced_once:
         synced_once = True
         try:
-            tree.copy_global_to(guild=MY_SERVER)
-            synced = await tree.sync(guild=MY_SERVER)
-            print(f"Synced {len(synced)} commands to the server.")
+            print("🔄 Syncing slash commands globally...")
+            synced = await tree.sync()
+            print(f"✅ Success! Synced {len(synced)} commands globally.")
         except Exception:
             traceback.print_exc()
 
@@ -72,19 +66,19 @@ async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
 
-    # Force sync command (owner only)
     if message.content.lower() == "!forcesync":
         if message.author.id != message.guild.owner_id:
             await message.channel.send("**Access Denied:** Server Owner only.")
             return
 
-        status = await message.channel.send("🔄 Forcing command sync...")
-        tree.copy_global_to(guild=MY_SERVER)
-        await tree.sync(guild=MY_SERVER)
-        await status.edit(content="**Force-Sync Complete!** Commands refreshed.")
+        status = await message.channel.send("🔄 Forcing global command sync...")
+        try:
+            synced = await tree.sync()
+            await status.edit(content=f"**Force-Sync Complete!** {len(synced)} commands refreshed globally.")
+        except Exception as e:
+            await status.edit(content=f"❌ **Sync Failed:** `{e}`")
         return
 
-    # Reply ONLY when the bot is explicitly @mentioned (not when someone just replies)
     if bot.user in message.mentions and not message.mention_everyone:
         if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
             try:
@@ -93,7 +87,6 @@ async def on_message(message: discord.Message):
                 pass
             return
 
-    # Random interrupter (10% chance)
     if random.random() < 0.10:
         funny_responses = [
             "Yeah",
@@ -108,7 +101,6 @@ async def on_message(message: discord.Message):
         except discord.HTTPException:
             pass
 
-    # React to the word "gamble"
     if "gamble" in message.content.lower():
         try:
             emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
@@ -127,7 +119,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         msg = f"**Access Denied!** You need these permissions: `{needed}`. (error code 6)"
     elif isinstance(error, app_commands.CheckFailure):
         if interaction.response.is_done():
-            return  # the check already replied
+            return
         msg = "You can't use this command."
     else:
         original = getattr(error, "original", error)
@@ -143,9 +135,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         pass
 
 
-# ====================== FUN COMMANDS ======================
+# ====================== ALL SLASH COMMANDS ======================
 
-# SET STATUS COMMAND. FOR SERVER OWNERS ONLY.
 @tree.command(name="setstatus", description="Change the bot's playing status")
 @app_commands.describe(text="The text you want the bot to display")
 @is_server_owner()
@@ -157,7 +148,6 @@ async def setstatus(interaction: discord.Interaction, text: str):
     )
 
 
-# /GAMBLE COMMAND
 @tree.command(name="gamble", description="Take a 1-in-5 chance to win a special role!")
 @app_commands.checks.cooldown(1, 60.0, key=lambda i: i.user.id)
 async def gamble(interaction: discord.Interaction):
@@ -183,8 +173,7 @@ async def gamble(interaction: discord.Interaction):
             )
         except discord.Forbidden:
             await interaction.response.send_message(
-                "I don't have permission to give that role. Contact the bot developer "
-                "or drag the bot role higher than the target role. (error code 3)",
+                "I don't have permission to give that role. Drag my role higher! (error code 3)",
                 ephemeral=True
             )
     else:
@@ -194,7 +183,6 @@ async def gamble(interaction: discord.Interaction):
         )
 
 
-# /SAY COMMAND: MAKE THE BOT REPEAT WHAT YOU WROTE
 @tree.command(name="say", description="Make the bot repeat a message")
 @app_commands.describe(message="The text you want the bot to say")
 @app_commands.checks.has_permissions(administrator=True)
@@ -203,36 +191,29 @@ async def say(interaction: discord.Interaction, message: str):
     await interaction.channel.send(message)
 
 
-# SUSPICIOUS COINFLIP
-@tree.command(name="coinflip", description="Flip a coin. Heads you win, Tails you get timed out for 1 minute!")
+@tree.command(name="coinflip", description="Flip a coin. Heads you win, Tails you get timed out!")
 async def coinflip(interaction: discord.Interaction):
     result = random.choice(["Heads", "Tails"])
-
     if result == "Heads":
         await interaction.response.send_message("🪙 **Heads!** You lucked out. You survive... for now.")
     else:
         try:
             await interaction.user.timeout(timedelta(seconds=60), reason="Lost the coinflip")
-            await interaction.response.send_message(
-                "🪙 **Tails!** Enjoy your **1-minute timeout**! :D"
-            )
+            await interaction.response.send_message("🪙 **Tails!** Enjoy your **1-minute timeout**! :D")
         except discord.Forbidden:
             await interaction.response.send_message(
-                "🪙 **Tails!** You should be timed out, but your Administrator permissions protected you. (error code 7)"
+                "🪙 **Tails!** You should be timed out, but your permissions protected you. (error code 7)"
             )
 
 
-# STEAL IMAGINARY COINS THAT DON'T EVEN EXIST
-@tree.command(name="steal", description="Attempt to steal imaginary coins from a server member!")
+@tree.command(name="steal", description="Attempt to steal imaginary coins!")
 @app_commands.describe(target="The server member you want to rob")
 async def steal(interaction: discord.Interaction, target: discord.Member):
     if target == interaction.user:
-        await interaction.response.send_message(
-            "You tried robbing yourself... (error code 8)", ephemeral=True)
+        await interaction.response.send_message("You tried robbing yourself... (error code 8)", ephemeral=True)
         return
     if target == bot.user:
-        await interaction.response.send_message(
-            "Firewall completely vaporized your wallet. (error code *e11*)", ephemeral=True)
+        await interaction.response.send_message("Firewall completely vaporized your wallet. (error code *e11*)", ephemeral=True)
         return
 
     if random.choice(["success", "fail"]) == "success":
@@ -242,17 +223,14 @@ async def steal(interaction: discord.Interaction, target: discord.Member):
         )
     else:
         await interaction.response.send_message(
-            f"**CAUGHT STEALING!** {interaction.user.mention} tried to rob {target.mention} "
-            f"and got thrown into imaginary jail!"
+            f"**CAUGHT STEALING!** {interaction.user.mention} tried to rob {target.mention} and went to imaginary jail!"
         )
 
 
-# RANDOM RATING
 @tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
 @app_commands.describe(thing="The object, person, or idea you want rated")
 async def rate(interaction: discord.Interaction, thing: str):
     score = random.randint(0, 10)
-
     if score <= 3:
         comments = ["Absolutely tragic. Delete this.", "This is so bad it almost crashed my servers."]
     elif score <= 7:
@@ -261,61 +239,38 @@ async def rate(interaction: discord.Interaction, thing: str):
         comments = ["Magnificent! I'm impressed.", "Amazing"]
 
     await interaction.response.send_message(
-        f"**Judgement Time!**\n"
-        f"**Thing:** {thing}\n"
-        f"**Rating:** `{score}/10`\n"
-        f'*"{random.choice(comments)}"*'
+        f"**Judgement Time!**\n**Thing:** {thing}\n**Rating:** `{score}/10`\n*\"{random.choice(comments)}\"*"
     )
 
 
-# 8BALL
 @tree.command(name="8ball", description="Ask the Magic 8-Ball a question")
 @app_commands.describe(question="The question you want answered")
 async def eightball(interaction: discord.Interaction, question: str):
-    responses = [
-        "Absolutely yes.",
-        "Signs point to yes.",
-        "Try again later.",
-        "Don't count on it.",
-        "Don't do it!",
-    ]
+    responses = ["Absolutely yes.", "Signs point to yes.", "Try again later.", "Don't count on it.", "Don't do it!"]
     await interaction.response.send_message(
-        f"**The Magic 8-Ball**\n"
-        f"**Question:** {question}\n"
-        f"**Answer:** {random.choice(responses)}"
+        f"**The Magic 8-Ball**\n**Question:** {question}\n**Answer:** {random.choice(responses)}"
     )
 
 
-# SLAP YOUR FRIEND WITH A RANDOM OBJECT
 @tree.command(name="slap", description="Slap a server member with a random object!")
 @app_commands.describe(target="The server member you want to slap")
 async def slap(interaction: discord.Interaction, target: discord.Member):
     if target == interaction.user:
-        await interaction.response.send_message(
-            f"{interaction.user.mention} tried to slap themselves but missed."
-        )
+        await interaction.response.send_message(f"{interaction.user.mention} tried to slap themselves but missed.")
         return
 
-    items = [
-        "a giant wet trout",
-        "a broken keyboard",
-        "a stale baguette",
-        "a comically large rubber duck",
-    ]
+    items = ["a giant wet trout", "a broken keyboard", "a stale baguette", "a comically large rubber duck"]
     await interaction.response.send_message(
-        f"**WHACK!** {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!"
+        f"WHACK! {interaction.user.mention} slaps {target.mention} with {random.choice(items)}!"
     )
 
 
-# /ROAST
 @tree.command(name="roast", description="Hit a fellow server member with a funny roast!")
 @app_commands.describe(target="The server member you want to roast")
 async def roast(interaction: discord.Interaction, target: discord.Member):
     if target == interaction.user:
         await interaction.response.send_message(
-            f"{interaction.user.mention}, roasting error: go read the (error code *e12*) in the error guide.",
-            ephemeral=True
-        )
+            f"{interaction.user.mention}, roasting error: check code e12.", ephemeral=True)
         return
     if target == bot.user:
         await interaction.response.send_message(
@@ -328,15 +283,10 @@ async def roast(interaction: discord.Interaction, target: discord.Member):
         "probably types with their two index fingers while looking at the keyboard.",
         "has the emotional stability of an expired carton of milk.",
         "is the human equivalent of a participation trophy.",
-        "looks like they remind the teacher to assign homework right before the bell.",
-        "probably puts milk in the bowl before the cereal. Absolutely criminal.",
-        "is like software update notifications: annoying and always showing up at the worst time.",
     ]
-
     await interaction.response.send_message(f"{target.mention}, {random.choice(roasts)}")
 
 
-# AVATAR
 @tree.command(name="avatar", description="Fetch a user's profile picture")
 @app_commands.describe(target="The server member (leave empty for yourself)")
 async def avatar(interaction: discord.Interaction, target: Optional[discord.Member] = None):
@@ -347,7 +297,6 @@ async def avatar(interaction: discord.Interaction, target: Optional[discord.Memb
         title=f"Avatar of {target.display_name}",
         color=target.color if target.color.value else discord.Color.blue()
     )
-
     if target.avatar:
         embed.set_image(url=target.avatar.url)
         embed.description = f"[Open original image]({target.avatar.url})"
@@ -358,7 +307,6 @@ async def avatar(interaction: discord.Interaction, target: Optional[discord.Memb
     await interaction.response.send_message(embed=embed)
 
 
-# WHOIS
 @tree.command(name="whois", description="View detailed profile information")
 @app_commands.describe(target="The server member (leave empty for yourself)")
 async def whois(interaction: discord.Interaction, target: Optional[discord.Member] = None):
@@ -382,7 +330,6 @@ async def whois(interaction: discord.Interaction, target: Optional[discord.Membe
         status_tags.append("Moderator")
     if target.bot:
         status_tags.append("Bot Account")
-
     status_display = ", ".join(status_tags) if status_tags else "Regular Member"
 
     embed = discord.Embed(
@@ -391,7 +338,7 @@ async def whois(interaction: discord.Interaction, target: Optional[discord.Membe
     )
     embed.set_thumbnail(url=target.display_avatar.url)
     embed.add_field(name="Display Name", value=target.mention, inline=True)
-    embed.add_field(name="Account ID", value=f"`{target.id}`", inline=True)
+    embed.add_field(name="Account ID", value=f"{target.id}", inline=True)
     embed.add_field(name="Status", value=status_display, inline=True)
     embed.add_field(name="Created On", value=account_created, inline=True)
     embed.add_field(name="Joined Server", value=server_joined, inline=True)
@@ -413,11 +360,11 @@ async def kick(interaction: discord.Interaction, member: discord.Member, reason:
         return await interaction.response.send_message("You can't kick the server owner.", ephemeral=True)
     if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
         return await interaction.response.send_message(
-            "**You can't kick someone with equal or higher role than you.**", ephemeral=True)
+            "You can't kick someone with equal or higher role than you.", ephemeral=True)
 
     try:
         await member.kick(reason=f"{interaction.user} | {reason}")
-        await interaction.response.send_message(f"**{member}** has been kicked.\n**Reason:** {reason}")
+        await interaction.response.send_message(f"{member} has been kicked.\nReason: {reason}")
     except discord.Forbidden:
         await interaction.response.send_message(
             "I don't have permission to kick this member. (error code e13)", ephemeral=True)
@@ -427,7 +374,7 @@ async def kick(interaction: discord.Interaction, member: discord.Member, reason:
 @app_commands.describe(
     member="The member to ban",
     reason="Reason for the ban",
-    delete_days="Delete messages from the last X days (0-7)"
+    delete_days="Delete messages from last X days"
 )
 @app_commands.checks.has_permissions(ban_members=True)
 async def ban(
@@ -442,23 +389,19 @@ async def ban(
         return await interaction.response.send_message("You can't ban the server owner.", ephemeral=True)
     if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
         return await interaction.response.send_message(
-            "You can't ban someone with equal or higher role than you. (error code e13)", ephemeral=True)
+            "You can't ban someone with equal or higher role than you.", ephemeral=True)
 
     try:
-        await member.ban(
-            reason=f"{interaction.user} | {reason}",
-            delete_message_seconds=delete_days * 86400
-        )
-        await interaction.response.send_message(f"**{member}** has been banned.\n**Reason:** {reason}")
+        await member.ban(reason=f"{interaction.user} | {reason}", delete_message_seconds=delete_days * 86400)
+        await interaction.response.send_message(f"{member} has been banned.\nReason: {reason}")
     except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to ban this member. (error code #e14)", ephemeral=True)
+        await interaction.response.send_message("I don't have permission to ban this member.", ephemeral=True)
 
 
 @tree.command(name="timeout", description="Timeout a member")
 @app_commands.describe(
     member="The member to timeout",
-    minutes="How many minutes the timeout should last",
+    minutes="Minutes to last",
     reason="Reason for the timeout"
 )
 @app_commands.checks.has_permissions(moderate_members=True)
@@ -474,16 +417,14 @@ async def timeout(
         return await interaction.response.send_message("You can't timeout the server owner.", ephemeral=True)
     if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
         return await interaction.response.send_message(
-            "You can't timeout someone with equal or higher role than you. (error code e13)", ephemeral=True)
+            "You can't timeout someone with equal or higher role than you.", ephemeral=True)
 
     try:
         await member.timeout(timedelta(minutes=minutes), reason=f"{interaction.user} | {reason}")
         await interaction.response.send_message(
-            f"**{member}** has been timed out for **{minutes} minutes**.\n**Reason:** {reason}"
-        )
+            f"{member} has been timed out for {minutes} minutes.\nReason: {reason}")
     except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to timeout this member. (error code #e14)", ephemeral=True)
+        await interaction.response.send_message("I don't have permission to timeout this member.", ephemeral=True)
 
 
 @tree.command(name="removetimeout", description="Remove timeout from a member")
@@ -492,10 +433,9 @@ async def timeout(
 async def removetimeout(interaction: discord.Interaction, member: discord.Member):
     try:
         await member.timeout(None)
-        await interaction.response.send_message(f"Timeout removed from **{member}**.")
+        await interaction.response.send_message(f"Timeout removed from {member}.")
     except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to remove the timeout. (error code #e14)", ephemeral=True)
+        await interaction.response.send_message("I don't have permission to remove the timeout.", ephemeral=True)
 
 
 @tree.command(name="addrole", description="Give a role to a member")
@@ -503,21 +443,19 @@ async def removetimeout(interaction: discord.Interaction, member: discord.Member
 @app_commands.checks.has_permissions(manage_roles=True)
 async def addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if role >= interaction.guild.me.top_role:
-        return await interaction.response.send_message(
-            "That role is higher than my highest role. (error code #e14)", ephemeral=True)
+        return await interaction.response.send_message("That role is higher than my highest role.", ephemeral=True)
     if role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
         return await interaction.response.send_message(
             "You can't give a role equal to or higher than your own.", ephemeral=True)
     if role in member.roles:
         return await interaction.response.send_message(
-            f"**{member}** already has the **{role.name}** role.", ephemeral=True)
+            f"{member} already has the {role.name} role.", ephemeral=True)
 
     try:
         await member.add_roles(role, reason=f"Given by {interaction.user}")
-        await interaction.response.send_message(f"Gave **{role.name}** to **{member}**.")
+        await interaction.response.send_message(f"Gave {role.name} to {member}.")
     except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to manage that role. (error code #e14)", ephemeral=True)
+        await interaction.response.send_message("I don't have permission to manage that role.", ephemeral=True)
 
 
 @tree.command(name="removerole", description="Remove a role from a member")
@@ -525,24 +463,20 @@ async def addrole(interaction: discord.Interaction, member: discord.Member, role
 @app_commands.checks.has_permissions(manage_roles=True)
 async def removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if role >= interaction.guild.me.top_role:
-        return await interaction.response.send_message(
-            "That role is higher than my highest role. (error code #e14)", ephemeral=True)
+        return await interaction.response.send_message("That role is higher than my highest role.", ephemeral=True)
     if role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
         return await interaction.response.send_message(
             "You can't remove a role equal to or higher than your own.", ephemeral=True)
     if role not in member.roles:
         return await interaction.response.send_message(
-            f"**{member}** doesn't have the **{role.name}** role.", ephemeral=True)
+            f"{member} doesn't have the {role.name} role.", ephemeral=True)
 
     try:
         await member.remove_roles(role, reason=f"Removed by {interaction.user}")
-        await interaction.response.send_message(f"Removed **{role.name}** from **{member}**.")
+        await interaction.response.send_message(f"Removed {role.name} from {member}.")
     except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to manage that role. (error code #e14)", ephemeral=True)
+        await interaction.response.send_message("I don't have permission to manage that role.", ephemeral=True)
 
-
-# ====================== QnA COMMAND ======================
 
 @tree.command(name="qna", description="Get a random silly question about anything")
 @app_commands.describe(topic="Optional topic: food, gaming or life (leave empty for random)")
@@ -551,36 +485,11 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
         "If you could have any superpower but it only worked on Tuesdays, what would it be?",
         "Would you rather fight 100 duck-sized horses or 1 horse-sized duck?",
         "What's the weirdest thing you've ever eaten on purpose?",
-        "If animals could talk, which one would be the rudest?",
-        "What's a conspiracy theory you half-believe?",
-        "If you had to rename yourself after a food, what would it be?",
-        "Would you rather always have to sing instead of talk, or dance instead of walk?",
-        "What's the most useless talent you have?",
-        "If your life had a loading screen tip, what would it say?",
-        "What's something that should be illegal but isn't?",
-        "If you could only eat one color of food for the rest of your life, what color?",
-        "Would you rather have a pause button or a rewind button for your life?",
-        "What's the dumbest way you've ever hurt yourself?",
-        "If ghosts were real, what would you do to annoy them?",
-        "What's a hill you're willing to die on that nobody else cares about?",
     ]
-
     topic_questions = {
-        "food": [
-            "What's a food combination that sounds disgusting but is actually fire?",
-            "If you had to eat the same meal every day for a year, what would it be?",
-            "Pineapple on pizza: war crime or genius?",
-        ],
-        "gaming": [
-            "What's the most rage-inducing game you've ever played?",
-            "If you could live in any game world, which one and why?",
-            "What's a game mechanic that should exist but doesn't?",
-        ],
-        "life": [
-            "What's a piece of advice that actually made your life worse?",
-            "If you could restart your life at any age, which age would you pick?",
-            "What's something everyone pretends to like but secretly hates?",
-        ],
+        "food": ["What's a food combination that sounds disgusting but is actually fire?"],
+        "gaming": ["What's the most rage-inducing game you've ever played?"],
+        "life": ["What's a piece of advice that actually made your life worse?"],
     }
 
     if topic and topic.lower() in topic_questions:
@@ -588,18 +497,14 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     else:
         question = random.choice(general_questions)
 
-    embed = discord.Embed(
-        title="Random Silly Question",
-        description=question,
-        color=discord.Color.random()
-    )
+    embed = discord.Embed(title="Random Silly Question", description=question, color=discord.Color.random())
     if topic:
         embed.set_footer(text=f"Topic: {topic}")
 
     await interaction.response.send_message(embed=embed)
 
 
-# ====================== KEEP ALIVE (for hosting platforms) ======================
+# ====================== KEEP ALIVE ======================
 app = Flask(__name__)
 
 
@@ -621,7 +526,6 @@ def keep_alive():
 if __name__ == "__main__":
     token = os.environ.get("TOKEN")
     if not token:
-        raise SystemExit("TOKEN environment variable is not set. Add it under Environment on Render.")
-
+        raise SystemExit("TOKEN environment variable is not set.")
     keep_alive()
     bot.run(token)
