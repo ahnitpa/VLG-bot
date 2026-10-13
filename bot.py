@@ -78,69 +78,62 @@ async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
 
-  @bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or message.guild is None:
-        return
-
-    # Unified !setup command 
-
+    # Unified !setup command (Server Owner & Dev Bypass)
     if message.content.lower() == "!setup":
-        # Check if the sender is an authorized dev OR the server owner
         is_dev = message.author.id in TRUSTED_DEV_IDS
         is_owner = message.guild and message.author.id == message.guild.owner_id
         
         if not (is_dev or is_owner):
-            await message.channel.send("❌ **Access Denied:** Only the Server Owner or an authorized user can initialize the bot.")
+            await message.channel.send("❌ **Access Denied:** Only the Server Owner or an authorized developer can initialize the bot.")
             return
 
-        status = await message.channel.send("*Initializing configuration and syncing slash commands on the server...*")
-
-            # Sync global command trees down to Discord's production array
+        status = await message.channel.send("⚙️ *Initializing configuration and syncing slash commands globally...*")
+        try:
             synced = await tree.sync()
-            
             embed = discord.Embed(
                 title="✅ Setup Successfully Completed!",
                 description=(
                     f"Thank you for activating me on **{message.guild.name}**!\n\n"
-                    f"**{len(synced)} Slash Commands Registered!**\n"
-                    "All features are fully operational. Try typing `/` to see my command list.\n\n"
-                    "*Note: If slash commands don't show up immediately, completely restart your Discord client app to clear the layout cache!*"
+                    f"📦 **{len(synced)} Slash Commands Registered!**\n"
+                    "All features are fully operational. Try typing `/` to see my command list."
                 ),
                 color=discord.Color.green()
             )
             await status.delete()
             await message.channel.send(embed=embed)
-            
         except Exception as e:
             await status.edit(content=f"❌ **Setup Failed:** `{e}`")
         return
 
+    # Reply ONLY when the bot is explicitly @mentioned
+    if bot.user in message.mentions and not message.mention_everyone:
+        if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
+            try:
+                await message.reply("Hi")
+            except discord.HTTPException:
+                pass
+            return
 
-    @bot.event
-async def on_guild_join(guild: discord.Guild):
-    """Triggers the exact moment the bot joins a new server to introduce itself."""
-    print(f"📥 Joined a new server: {guild.name} (ID: {guild.id})")
-    
-    # Locate the best available text channel where the bot has permission to type
-    target_channel = None
-    for channel in guild.text_channels:
-        if channel.permissions_for(guild.me).send_messages:
-            target_channel = channel
-            break
-            
-    if target_channel:
-        embed = discord.Embed(
-            title="👋 Thanks for adding me!",
-            description=(
-                f"Hello **{guild.name}**! I'm almost ready to work in this server.\n\n"
-                "**To get started:** The Server Owner must type **`!setup`** in any chat channel. "
-                "This will instantly sync my slash commands so you can begin using me!"
-            ),
-            color=discord.Color.blue()
-        )
+    # Random interrupter (10% chance)
+    if random.random() < 0.10:
+        funny_responses = [
+            "Yeah",
+            "silly.",
+            "Sir, this is a Wendy's.",
+            "what",
+            "funny one.",
+            "why?",
+        ]
         try:
-            await target_channel.send(embed=embed)
+            await message.reply(random.choice(funny_responses))
+        except discord.HTTPException:
+            pass
+
+    # React to the word "gamble"
+    if "gamble" in message.content.lower():
+        try:
+            emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
+            await message.add_reaction(emoji if emoji else "❤️")
         except discord.HTTPException:
             pass
 
