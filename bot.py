@@ -74,36 +74,25 @@ async def on_ready():
 
 
 @bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or message.guild is None:
-        return
-
-    # Unified !setup command (Server Owner & Dev Bypass)
-    if message.content.lower() == "!setup":
-        is_dev = message.author.id in TRUSTED_DEV_IDS
-        is_owner = message.guild and message.author.id == message.guild.owner_id
+async def on_ready():
+    print(f"Logged in as {bot.user} ({bot.user.id})")
+    
+    # ⚠️ TEMPORARY CLEAN-UP LAYER
+    try:
+        # 1. Target your specific old testing server ID
+        old_server = discord.Object(id=1478447010284568781)
         
-        if not (is_dev or is_owner):
-            await message.channel.send("❌ **Access Denied:** Only the Server Owner or an authorized developer can initialize the bot.")
-            return
-
-        status = await message.channel.send("⚙️ *Initializing configuration and syncing slash commands globally...*")
-        try:
-            synced = await tree.sync()
-            embed = discord.Embed(
-                title="✅ Setup Successfully Completed!",
-                description=(
-                    f"Thank you for activating me on **{message.guild.name}**!\n\n"
-                    f"📦 **{len(synced)} Slash Commands Registered!**\n"
-                    "All features are fully operational. Try typing `/` to see my command list."
-                ),
-                color=discord.Color.green()
-            )
-            await status.delete()
-            await message.channel.send(embed=embed)
-        except Exception as e:
-            await status.edit(content=f"❌ **Setup Failed:** `{e}`")
-        return
+        print("🧹 Clearing old duplicate server-locked commands...")
+        tree.clear_commands(guild=old_server)
+        await tree.sync(guild=old_server)
+        
+        # 2. Re-sync your clean global list
+        print("🔄 Re-syncing pristine global command layout...")
+        synced = await tree.sync()
+        print(f"✅ Success! Wiped duplicates and synced {len(synced)} commands globally.")
+        
+    except Exception as e:
+        print(f"Error during clean sync: {e}")
 
     # Reply ONLY when the bot is explicitly @mentioned
     if bot.user in message.mentions and not message.mention_everyone:
