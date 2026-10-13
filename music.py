@@ -383,8 +383,8 @@ async def leave(interaction: discord.Interaction):
     await interaction.response.send_message("Left the voice channel.")
 
 
-@app_commands.command(name="play", description="Play a song from YouTube (URL or search)")
-@app_commands.describe(query="YouTube URL or search term")
+@app_commands.command(name="play", description="Play a song from SoundCloud (URL only)")
+@app_commands.describe(query="SoundCloud URL")
 async def play(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
 
