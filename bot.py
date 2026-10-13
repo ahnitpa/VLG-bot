@@ -31,18 +31,30 @@ music.setup(bot, tree)
 synced_once = False
 
 
-# ====================== OWNER CHECK ======================
+# ====================== MASTER LIST ======================
+
+TRUSTED_DEV_IDS = [
+    1151184036681752576,  # pepper
+    1373999565312888842,  # ahnitpa
+    1325908309534048318   # luchoo (Lightsout)
+]
+
 def is_server_owner():
     async def predicate(interaction: discord.Interaction) -> bool:
+        # If the user is on the master developer list, let them right through!
+        if interaction.user.id in TRUSTED_DEV_IDS:
+            return True
+            
+        # Otherwise, fall back to checking if they are the actual server owner
         if interaction.guild and interaction.user.id == interaction.guild.owner_id:
             return True
+            
         await interaction.response.send_message(
-            "Only the server owner can use this command. (error code #1)",
+            "Only the server owner or an authorized developer can use this command. (error code #1)",
             ephemeral=True
         )
         return False
     return app_commands.check(predicate)
-
 
 # ====================== EVENTS ======================
 @bot.event
@@ -66,26 +78,71 @@ async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
 
-    if message.content.lower() == "!forcesync":
-        if message.author.id != message.guild.owner_id:
-            await message.channel.send("**Access Denied:** Server Owner only.")
-            return
-
-        status = await message.channel.send("🔄 Forcing global command sync...")
-        try:
-            synced = await tree.sync()
-            await status.edit(content=f"**Force-Sync Complete!** {len(synced)} commands refreshed globally.")
-        except Exception as e:
-            await status.edit(content=f"❌ **Sync Failed:** `{e}`")
+  @bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot or message.guild is None:
         return
 
-    if bot.user in message.mentions and not message.mention_everyone:
-        if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
-            try:
-                await message.reply("Hi")
-            except discord.HTTPException:
-                pass
+    # Unified !setup command 
+
+    if message.content.lower() == "!setup":
+        # Check if the sender is an authorized dev OR the server owner
+        is_dev = message.author.id in TRUSTED_DEV_IDS
+        is_owner = message.guild and message.author.id == message.guild.owner_id
+        
+        if not (is_dev or is_owner):
+            await message.channel.send("❌ **Access Denied:** Only the Server Owner or an authorized user can initialize the bot.")
             return
+
+        status = await message.channel.send("*Initializing configuration and syncing slash commands on the server...*")
+
+            # Sync global command trees down to Discord's production array
+            synced = await tree.sync()
+            
+            embed = discord.Embed(
+                title="✅ Setup Successfully Completed!",
+                description=(
+                    f"Thank you for activating me on **{message.guild.name}**!\n\n"
+                    f"**{len(synced)} Slash Commands Registered!**\n"
+                    "All features are fully operational. Try typing `/` to see my command list.\n\n"
+                    "*Note: If slash commands don't show up immediately, completely restart your Discord client app to clear the layout cache!*"
+                ),
+                color=discord.Color.green()
+            )
+            await status.delete()
+            await message.channel.send(embed=embed)
+            
+        except Exception as e:
+            await status.edit(content=f"❌ **Setup Failed:** `{e}`")
+        return
+
+
+    @bot.event
+async def on_guild_join(guild: discord.Guild):
+    """Triggers the exact moment the bot joins a new server to introduce itself."""
+    print(f"📥 Joined a new server: {guild.name} (ID: {guild.id})")
+    
+    # Locate the best available text channel where the bot has permission to type
+    target_channel = None
+    for channel in guild.text_channels:
+        if channel.permissions_for(guild.me).send_messages:
+            target_channel = channel
+            break
+            
+    if target_channel:
+        embed = discord.Embed(
+            title="👋 Thanks for adding me!",
+            description=(
+                f"Hello **{guild.name}**! I'm almost ready to work in this server.\n\n"
+                "**To get started:** The Server Owner must type **`!setup`** in any chat channel. "
+                "This will instantly sync my slash commands so you can begin using me!"
+            ),
+            color=discord.Color.blue()
+        )
+        try:
+            await target_channel.send(embed=embed)
+        except discord.HTTPException:
+            pass
 
     if random.random() < 0.10:
         funny_responses = [
