@@ -571,6 +571,102 @@ def run_web_server():
 def keep_alive():
     Thread(target=run_web_server, daemon=True).start()
 
+# ====================== UTILITY CREATION COMMANDS ======================
+
+@tree.command(name="createcategory", description="Create a new category channel in the server.")
+@app_commands.describe(name="The name of the new category")
+@app_commands.checks.has_permissions(manage_channels=True)
+async def createcategory(interaction: discord.Interaction, name: str):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        category = await interaction.guild.create_category(name=name)
+        await interaction.followup.send(f"📁 Successfully created category: **{category.name}**", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to create category: `{e}`", ephemeral=True)
+
+
+@tree.command(name="createchannel", description="Create a new text channel inside an optional category.")
+@app_commands.describe(
+    name="The name of the text channel",
+    category="The category folder to place this channel into"
+)
+@app_commands.checks.has_permissions(manage_channels=True)
+async def createchannel(interaction: discord.Interaction, name: str, category: Optional[discord.CategoryChannel] = None):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        # Convert channel name to lowercase standard Discord URL format
+        formatted_name = name.lower().replace(" ", "-")
+        channel = await interaction.guild.create_text_channel(name=formatted_name, category=category)
+        
+        location_text = f" inside **{category.name}**" if category else ""
+        await interaction.followup.send(f"💬 Successfully created text channel: {channel.mention}{location_text}", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to create text channel: `{e}`", ephemeral=True)
+
+
+@tree.command(name="createvoice", description="Create a new voice channel inside an optional category.")
+@app_commands.describe(
+    name="The name of the voice channel",
+    category="The category folder to place this voice channel into"
+)
+@app_commands.checks.has_permissions(manage_channels=True)
+async def createvoice(interaction: discord.Interaction, name: str, category: Optional[discord.CategoryChannel] = None):
+    await interaction.response.defer(ephemeral=True)
+    try:
+        voice_channel = await interaction.guild.create_voice_channel(name=name, category=category)
+        
+        location_text = f" inside **{category.name}**" if category else ""
+        await interaction.followup.send(f"🔊 Successfully created voice channel: **{voice_channel.name}**{location_text}", ephemeral=True)
+    except discord.Forbidden:
+        await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to create voice channel: `{e}`", ephemeral=True)
+
+@tree.command(name="movechannel", description="Move a channel, voice channel, or category up or down.")
+@app_commands.describe(
+    target="The channel, voice channel, or category folder you want to move",
+    direction="Choose whether to nudge it Up or Down"
+)
+@app_commands.choices(direction=[
+    app_commands.Choice(name="🔼 Move Up", value="up"),
+    app_commands.Choice(name="🔽 Move Down", value="down")
+])
+@app_commands.checks.has_permissions(manage_channels=True)
+async def movechannel(interaction: discord.Interaction, target: discord.abc.GuildChannel, direction: app_commands.Choice[str]):
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # Calculate the movement value based on the chosen direction
+        # Moving 'up' means lowering the position number (closer to 0)
+        # Moving 'down' means increasing the position number
+        change = -1 if direction.value == "up" else 1
+        new_position = max(0, target.position + change)
+        
+        # Apply the new positional ordering assignment
+        await target.edit(position=new_position)
+        
+        await interaction.followup.send(
+            f"✅ Successfully moved **{target.name}** {direction.name.lower()}!", 
+            ephemeral=True
+        )
+        
+    except discord.Forbidden:
+        await interaction.followup.send(
+            "❌ Error: I don't have permission to manage this channel. "
+            "Make sure my bot role is high enough in the server settings!", 
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.followup.send(
+            f"❌ Failed to move channel: `{e}`", 
+            ephemeral=True
+        )
+
+
 
 # ====================== START ======================
 if __name__ == "__main__":
