@@ -64,8 +64,8 @@ elif os.path.exists("cookies.txt"):
 
 
 FFMPEG_OPTIONS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn -filter:a asetrate=48000",
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re",
+    "options": "-vn -filter:a atempo=1.0",
     "executable": FFMPEG_PATH,
 }
 
