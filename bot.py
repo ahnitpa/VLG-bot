@@ -121,6 +121,93 @@ async def on_message(message: discord.Message):
         except Exception as e:
             await status.edit(content=f"❌ **Force-Sync Failed:** `{e}`")
         return
+    # Explicit !serverlist command (Authorized Developers Only)
+    if message.content.lower() == "!serverlist":
+        if message.author.id not in TRUSTED_DEV_IDS:
+            await message.channel.send("❌ **Access Denied:** Developer eyes only.")
+            return
+
+        # Sort the guilds the bot is in by member count (highest to lowest)
+        sorted_guilds = sorted(bot.guilds, key=lambda g: g.member_count, reverse=True)
+        
+        # Build the text report string
+        report = "**Bot Server Presence List (Largest to Smallest):**\n\n"
+        for index, guild in enumerate(sorted_guilds, start=1):
+            report += f"`{index}.` **{guild.name}** | ID: `{guild.id}` | 👥 Members: `{guild.member_count}`\n"
+            
+            # Prevent hitting Discord's 2000 character limit per message
+            if len(report) > 1800:
+                report += "...and more servers."
+                break
+
+        await message.channel.send(report)
+        return
+# ====================== ADVANCED LOGGING MODULE ======================
+
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    """Logs when a user joins, leaves, or switches voice channels."""
+    if member.bot:
+        return
+
+    # Find the logging channel named 'bot-logs' in the server
+    log_channel = discord.utils.get(member.guild.text_channels, name="bot-logs")
+    if not log_channel:
+        return
+
+    embed = discord.Embed(color=discord.Color.blue())
+    embed.set_author(name=f"{member.display_name}", icon_url=member.display_avatar.url)
+
+    # Case 1: Joined a voice channel
+    if before.channel is None and after.channel is not None:
+        embed.title = "Voice Channel Joined"
+        embed.description = f"{member.mention} connected to **{after.channel.name}**"
+        embed.color = discord.Color.green()
+
+    # Case 2: Left a voice channel
+    elif before.channel is not None and after.channel is None:
+        embed.title = "Voice Channel Left"
+        embed.description = f"{member.mention} disconnected from **{before.channel.name}**"
+        embed.color = discord.Color.red()
+
+    # Case 3: Switched voice channels
+    elif before.channel is not None and after.channel is not None and before.channel != after.channel:
+        embed.title = "Voice Channel Switched"
+        embed.description = f"{member.mention} moved from **{before.channel.name}** ➡️ **{after.channel.name}**"
+        embed.color = discord.Color.orange()
+    else:
+        return  # Mute/deafen updates are ignored to prevent spam
+
+    try:
+        await log_channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
+
+
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
+    """Logs unusual activity like text, voice, or category channels being deleted."""
+    # Find the logging channel named 'bot-logs'
+    log_channel = discord.utils.get(channel.guild.text_channels, name="bot-logs")
+    if not log_channel:
+        return
+
+    # Don't log if the tracking channel itself is being deleted
+    if channel.name == "bot-logs":
+        return
+
+    embed = discord.Embed(
+        title="Unusual Activity: Channel Deleted",
+        description=f"The channel/category **{channel.name}** (Type: `{channel.type}`) was deleted from the server.",
+        color=discord.Color.dark_red()
+    )
+    embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
+
+    try:
+        await log_channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
+
 
     # Reply ONLY when the bot is explicitly @mentioned
     if bot.user in message.mentions and not message.mention_everyone:
