@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import traceback
 from datetime import timedelta
 from threading import Thread
@@ -7,6 +8,7 @@ from typing import Optional
 
 import discord
 from discord import app_commands
+from discord.ext import tasks
 from flask import Flask
 
 import music
@@ -32,23 +34,23 @@ synced_once = False
 inactive_config = {}
 
 # ====================== MASTER LIST ======================
-
 TRUSTED_DEV_IDS = [
     1151184036681752576,  # pepper
     1373999565312888842,  # ahnitpa
-    1325908309534048318   # luchoo (Lightsout)
+    1325908309534048318,  # luchoo (Lightsout)
 ]
+
 
 def is_server_owner():
     async def predicate(interaction: discord.Interaction) -> bool:
-        # If the user is on the master developer list, let them right through!
+        # Master developer list bypass
         if interaction.user.id in TRUSTED_DEV_IDS:
             return True
-            
-        # Otherwise, fall back to checking if they are the actual server owner
+
+        # Otherwise, fall back to the actual server owner
         if interaction.guild and interaction.user.id == interaction.guild.owner_id:
             return True
-            
+
         await interaction.response.send_message(
             "Only the server owner or an authorized developer can use this command. (error code #1)",
             ephemeral=True
@@ -56,12 +58,61 @@ def is_server_owner():
         return False
     return app_commands.check(predicate)
 
+
+# ====================== INACTIVITY TRACKING TASK ======================
+@tasks.loop(minutes=1)
+async def check_inactivity_timers():
+    """Loops every 60 seconds to monitor server playback inactivity."""
+    for guild_id, info in list(inactive_config.items()):
+        guild = bot.get_guild(guild_id)
+        if not guild:
+            continue
+
+        vc = guild.voice_client
+        player = music.players.get(guild_id) if hasattr(music, "players") else None
+
+        is_user_active = False
+
+        if vc and vc.channel:
+            active_listeners = [m for m in vc.channel.members if not m.bot]
+            if (vc.is_playing() or vc.is_paused()) and len(active_listeners) > 0:
+                is_user_active = True
+
+        if player and (player.current or player.queue):
+            if getattr(player, "auto_paused", False):
+                is_user_active = False
+            elif player.current:
+                is_user_active = True
+
+        if is_user_active:
+            info["idle_since"] = None
+        else:
+            if info["idle_since"] is None:
+                info["idle_since"] = time.time()
+            elif time.time() - info["idle_since"] >= 300:
+                target_channel = guild.get_channel(info["channel_id"])
+                if target_channel and (vc is None or vc.channel != target_channel):
+                    try:
+                        if vc is None:
+                            await target_channel.connect()
+                        else:
+                            await vc.move_to(target_channel)
+                        print(f"💤 Uptime Connection: Auto-joined idle channel in server {guild.name}")
+                    except Exception as e:
+                        print(f"Could not complete auto-join sequence: {e}")
+                    info["idle_since"] = None
+
+
 # ====================== EVENTS ======================
 @bot.event
 async def on_ready():
     global synced_once
     print(f"Logged in as {bot.user} ({bot.user.id})")
     print("Registered commands:", sorted(c.name for c in tree.get_commands()))
+
+    if not check_inactivity_timers.is_running():
+        check_inactivity_timers.start()
+        print("⏰ Background inactivity tracking routine initialized.")
 
     if not synced_once:
         synced_once = True
@@ -78,13 +129,14 @@ async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
 
+    is_dev = message.author.id in TRUSTED_DEV_IDS
+    is_owner = message.author.id == message.guild.owner_id
+
     # Unified !setup command (Server Owner & Dev Bypass)
     if message.content.lower() == "!setup":
-        is_dev = message.author.id in TRUSTED_DEV_IDS
-        is_owner = message.guild and message.author.id == message.guild.owner_id
-        
         if not (is_dev or is_owner):
-            await message.channel.send("❌ **Access Denied:** Only the Server Owner or an authorized developer can initialize the bot.")
+            await message.channel.send(
+                "❌ **Access Denied:** Only the Server Owner or an authorized developer can initialize the bot.")
             return
 
         status = await message.channel.send("⚙️ *Initializing configuration and syncing slash commands globally...*")
@@ -104,37 +156,36 @@ async def on_message(message: discord.Message):
         except Exception as e:
             await status.edit(content=f"❌ **Setup Failed:** `{e}`")
         return
+
     # Explicit !forcesync manual command (Server Owner & Dev Bypass)
     if message.content.lower() == "!forcesync":
-        is_dev = message.author.id in TRUSTED_DEV_IDS
-        is_owner = message.guild and message.author.id == message.guild.owner_id
-        
         if not (is_dev or is_owner):
-            await message.channel.send("❌ **Access Denied:** Only the Server Owner or an authorized developer can force an update.")
+            await message.channel.send(
+                "❌ **Access Denied:** Only the Server Owner or an authorized developer can force an update.")
             return
 
         status = await message.channel.send("🔄 *Manually broadcasting and refreshing command layout strings globally...*")
         try:
-            # Sync global command trees down to Discord's production array
             synced = await tree.sync()
-            await status.edit(content=f"**Force-Sync Complete!** `{len(synced)}` global app slash commands refreshed everywhere.")
+            await status.edit(
+                content=f"**Force-Sync Complete!** `{len(synced)}` global app slash commands refreshed everywhere.")
         except Exception as e:
             await status.edit(content=f"❌ **Force-Sync Failed:** `{e}`")
         return
+
     # Explicit !serverlist command (Authorized Developers Only)
     if message.content.lower() == "!serverlist":
-        if message.author.id not in TRUSTED_DEV_IDS:
+        if not is_dev:
             await message.channel.send("❌ **Access Denied:** Developer eyes only.")
             return
 
-        # Sort the guilds the bot is in by member count (highest to lowest)
+        # Sort guilds by member count (highest to lowest)
         sorted_guilds = sorted(bot.guilds, key=lambda g: g.member_count, reverse=True)
-        
-        # Build the text report string
+
         report = "**Bot Server Presence List (Largest to Smallest):**\n\n"
         for index, guild in enumerate(sorted_guilds, start=1):
             report += f"`{index}.` **{guild.name}** | ID: `{guild.id}` | 👥 Members: `{guild.member_count}`\n"
-            
+
             # Prevent hitting Discord's 2000 character limit per message
             if len(report) > 1800:
                 report += "...and more servers."
@@ -142,16 +193,13 @@ async def on_message(message: discord.Message):
 
         await message.channel.send(report)
         return
+
     # Configures the 5-minute automated inactivity fallback channel
     if message.content.lower().startswith("!inactive"):
-        is_dev = message.author.id in TRUSTED_DEV_IDS
-        is_owner = message.guild and message.author.id == message.guild.owner_id
-        
         if not (is_dev or is_owner):
             await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
             return
 
-        # Split the content to parse out the targeted voice channel ID
         parts = message.content.split()
         if len(parts) < 2:
             await message.channel.send("❌ **Usage:** `!inactive <voice_channel_id>`")
@@ -160,20 +208,22 @@ async def on_message(message: discord.Message):
         try:
             channel_id = int(parts[1])
             vc_channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
-            
+
             if not isinstance(vc_channel, discord.VoiceChannel):
-                await message.channel.send("❌ **Error:** That ID belongs to a text or category channel. Please supply a valid Voice Channel ID.")
+                await message.channel.send(
+                    "❌ **Error:** That ID belongs to a text or category channel. "
+                    "Please supply a valid Voice Channel ID.")
                 return
 
-            # Store the setting for this server
-            guild_id = message.guild.id
-            inactive_config[guild_id] = {
+            inactive_config[message.guild.id] = {
                 "channel_id": vc_channel.id,
-                "idle_since": None  # Will be tracked dynamically by our background loop
+                "idle_since": None,  # Tracked dynamically by the background loop
             }
 
-            await message.channel.send(f"**Inactivity Routing Activated!** If I sit completely unused for **5 minutes**, I will automatically join **{vc_channel.name}**.")
-            
+            await message.channel.send(
+                f"**Inactivity Routing Activated!** If I sit completely unused for **5 minutes**, "
+                f"I will automatically join **{vc_channel.name}**.")
+
         except ValueError:
             await message.channel.send("❌ **Error:** The voice channel ID must be a valid number.")
         except discord.NotFound:
@@ -181,34 +231,6 @@ async def on_message(message: discord.Message):
         except Exception as e:
             await message.channel.send(f"❌ **Failed to map channel:** `{e}`")
         return
-
-# ====================== ADVANCED LOGGING MODULE ======================
-
-
-@bot.event
-async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
-    """Logs unusual activity like text, voice, or category channels being deleted."""
-    # Find the logging channel named 'bot-logs'
-    log_channel = discord.utils.get(channel.guild.text_channels, name="bot-logs")
-    if not log_channel:
-        return
-
-    # Don't log if the tracking channel itself is being deleted
-    if channel.name == "bot-logs":
-        return
-
-    embed = discord.Embed(
-        title="Unusual Activity: Channel Deleted",
-        description=f"The channel/category **{channel.name}** (Type: `{channel.type}`) was deleted from the server.",
-        color=discord.Color.dark_red()
-    )
-    embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
-
-    try:
-        await log_channel.send(embed=embed)
-    except discord.HTTPException:
-        pass
-
 
     # Reply ONLY when the bot is explicitly @mentioned
     if bot.user in message.mentions and not message.mention_everyone:
@@ -242,26 +264,30 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
         except discord.HTTPException:
             pass
 
-    if random.random() < 0.10:
-        funny_responses = [
-            "Yeah",
-            "silly.",
-            "Sir, this is a Wendy's.",
-            "what",
-            "funny one.",
-            "why?",
-        ]
-        try:
-            await message.reply(random.choice(funny_responses))
-        except discord.HTTPException:
-            pass
 
-    if "gamble" in message.content.lower():
-        try:
-            emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
-            await message.add_reaction(emoji if emoji else "❤️")
-        except discord.HTTPException:
-            pass
+# ====================== ADVANCED LOGGING MODULE ======================
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
+    """Logs unusual activity like text, voice, or category channels being deleted."""
+    log_channel = discord.utils.get(channel.guild.text_channels, name="bot-logs")
+    if not log_channel:
+        return
+
+    # Don't log if the logging channel itself is being deleted
+    if channel.name == "bot-logs":
+        return
+
+    embed = discord.Embed(
+        title="Unusual Activity: Channel Deleted",
+        description=f"The channel/category **{channel.name}** (Type: `{channel.type}`) was deleted from the server.",
+        color=discord.Color.dark_red()
+    )
+    embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
+
+    try:
+        await log_channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
 
 
 # ====================== ERROR HANDLER ======================
@@ -368,7 +394,8 @@ async def steal(interaction: discord.Interaction, target: discord.Member):
         await interaction.response.send_message("You tried robbing yourself... (error code 8)", ephemeral=True)
         return
     if target == bot.user:
-        await interaction.response.send_message("Firewall completely vaporized your wallet. (error code *e11*)", ephemeral=True)
+        await interaction.response.send_message(
+            "Firewall completely vaporized your wallet. (error code *e11*)", ephemeral=True)
         return
 
     if random.choice(["success", "fail"]) == "success":
@@ -659,23 +686,6 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
     await interaction.response.send_message(embed=embed)
 
 
-# ====================== KEEP ALIVE ======================
-app = Flask(__name__)
-
-
-@app.route("/")
-def home():
-    return "Bot is online and active!"
-
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
-
-def keep_alive():
-    Thread(target=run_web_server, daemon=True).start()
-
 # ====================== UTILITY CREATION COMMANDS ======================
 
 @tree.command(name="createcategory", description="Create a new category channel in the server.")
@@ -698,15 +708,20 @@ async def createcategory(interaction: discord.Interaction, name: str):
     category="The category folder to place this channel into"
 )
 @app_commands.checks.has_permissions(manage_channels=True)
-async def createchannel(interaction: discord.Interaction, name: str, category: Optional[discord.CategoryChannel] = None):
+async def createchannel(
+    interaction: discord.Interaction,
+    name: str,
+    category: Optional[discord.CategoryChannel] = None
+):
     await interaction.response.defer(ephemeral=True)
     try:
-        # Convert channel name to lowercase standard Discord URL format
+        # Standard Discord channel name format
         formatted_name = name.lower().replace(" ", "-")
         channel = await interaction.guild.create_text_channel(name=formatted_name, category=category)
-        
+
         location_text = f" inside **{category.name}**" if category else ""
-        await interaction.followup.send(f"💬 Successfully created text channel: {channel.mention}{location_text}", ephemeral=True)
+        await interaction.followup.send(
+            f"💬 Successfully created text channel: {channel.mention}{location_text}", ephemeral=True)
     except discord.Forbidden:
         await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
     except Exception as e:
@@ -719,17 +734,23 @@ async def createchannel(interaction: discord.Interaction, name: str, category: O
     category="The category folder to place this voice channel into"
 )
 @app_commands.checks.has_permissions(manage_channels=True)
-async def createvoice(interaction: discord.Interaction, name: str, category: Optional[discord.CategoryChannel] = None):
+async def createvoice(
+    interaction: discord.Interaction,
+    name: str,
+    category: Optional[discord.CategoryChannel] = None
+):
     await interaction.response.defer(ephemeral=True)
     try:
         voice_channel = await interaction.guild.create_voice_channel(name=name, category=category)
-        
+
         location_text = f" inside **{category.name}**" if category else ""
-        await interaction.followup.send(f"🔊 Successfully created voice channel: **{voice_channel.name}**{location_text}", ephemeral=True)
+        await interaction.followup.send(
+            f"🔊 Successfully created voice channel: **{voice_channel.name}**{location_text}", ephemeral=True)
     except discord.Forbidden:
         await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"❌ Failed to create voice channel: `{e}`", ephemeral=True)
+
 
 @tree.command(name="movechannel", description="Move a channel, voice channel, or category up or down.")
 @app_commands.describe(
@@ -738,52 +759,57 @@ async def createvoice(interaction: discord.Interaction, name: str, category: Opt
 )
 @app_commands.choices(direction=[
     app_commands.Choice(name="🔼 Move Up", value="up"),
-    app_commands.Choice(name="🔽 Move Down", value="down")
+    app_commands.Choice(name="🔽 Move Down", value="down"),
 ])
 @app_commands.checks.has_permissions(manage_channels=True)
-async def movechannel(interaction: discord.Interaction, target: discord.abc.GuildChannel, direction: app_commands.Choice[str]):
+async def movechannel(
+    interaction: discord.Interaction,
+    target: discord.abc.GuildChannel,
+    direction: app_commands.Choice[str]
+):
     await interaction.response.defer(ephemeral=True)
-    
+
     try:
-        # Calculate the movement value based on the chosen direction
-        # Moving 'up' means lowering the position number (closer to 0)
-        # Moving 'down' means increasing the position number
+        # Moving 'up' lowers the position number (closer to 0); 'down' raises it
         change = -1 if direction.value == "up" else 1
         new_position = max(0, target.position + change)
-        
-        # Apply the new positional ordering assignment
+
         await target.edit(position=new_position)
-        
+
         await interaction.followup.send(
-            f"✅ Successfully moved **{target.name}** {direction.name.lower()}!", 
+            f"✅ Successfully moved **{target.name}** {direction.name.lower()}!",
             ephemeral=True
         )
-        
+
     except discord.Forbidden:
         await interaction.followup.send(
             "❌ Error: I don't have permission to manage this channel. "
-            "Make sure my bot role is high enough in the server settings!", 
+            "Make sure my bot role is high enough in the server settings!",
             ephemeral=True
         )
     except Exception as e:
-        await interaction.followup.send(
-            f"❌ Failed to move channel: `{e}`", 
-            ephemeral=True
-        )
+        await interaction.followup.send(f"❌ Failed to move channel: `{e}`", ephemeral=True)
 
+
+# ====================== KEEP ALIVE ======================
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+    return "Bot is online and active!"
+
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+
+def keep_alive():
+    Thread(target=run_web_server, daemon=True).start()
 
 
 # ====================== START ======================
-@bot.event
-async def on_ready():
-    global synced_once
-    print(f"Logged in as {bot.user} ({bot.user.id})")
-    
-    # Fire up the loop thread if it isn't running yet
-    if not check_inactivity_timers.is_running():
-        check_inactivity_timers.start()
-        print("Background inactivity tracking routine setup.")
-
 if __name__ == "__main__":
     token = os.environ.get("TOKEN")
     if not token:
