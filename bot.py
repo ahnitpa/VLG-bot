@@ -144,45 +144,6 @@ async def on_message(message: discord.Message):
         return
 # ====================== ADVANCED LOGGING MODULE ======================
 
-@bot.event
-async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
-    """Logs when a user joins, leaves, or switches voice channels."""
-    if member.bot:
-        return
-
-    # Find the logging channel named 'bot-logs' in the server
-    log_channel = discord.utils.get(member.guild.text_channels, name="bot-logs")
-    if not log_channel:
-        return
-
-    embed = discord.Embed(color=discord.Color.blue())
-    embed.set_author(name=f"{member.display_name}", icon_url=member.display_avatar.url)
-
-    # Case 1: Joined a voice channel
-    if before.channel is None and after.channel is not None:
-        embed.title = "Voice Channel Joined"
-        embed.description = f"{member.mention} connected to **{after.channel.name}**"
-        embed.color = discord.Color.green()
-
-    # Case 2: Left a voice channel
-    elif before.channel is not None and after.channel is None:
-        embed.title = "Voice Channel Left"
-        embed.description = f"{member.mention} disconnected from **{before.channel.name}**"
-        embed.color = discord.Color.red()
-
-    # Case 3: Switched voice channels
-    elif before.channel is not None and after.channel is not None and before.channel != after.channel:
-        embed.title = "Voice Channel Switched"
-        embed.description = f"{member.mention} moved from **{before.channel.name}** ➡️ **{after.channel.name}**"
-        embed.color = discord.Color.orange()
-    else:
-        return  # Mute/deafen updates are ignored to prevent spam
-
-    try:
-        await log_channel.send(embed=embed)
-    except discord.HTTPException:
-        pass
-
 
 @bot.event
 async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
