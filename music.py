@@ -222,6 +222,29 @@ async def notify(player: GuildPlayer, embed: discord.Embed) -> None:
         print(f"Could not post music status: {e}")
 
 
+def do_skip(vc: discord.VoiceClient, player: GuildPlayer) -> None:
+    """Stop current playback and mark a skip in progress.
+
+    This sets player.skip_flag so the player doesn't re-queue the current track
+    when the track's finished callback runs, clears skip votes, and stops the
+    voice client so the playback 'after' handler will advance to the next track.
+    """
+    if vc is None or player is None or player.current is None:
+        return
+
+    # Mark a skip/replay is in progress so looping logic treats the track as finished.
+    player.skip_flag = True
+    # Clear any existing votes for this track.
+    player.skip_votes.clear()
+
+    try:
+        # vc.stop() causes the after() callback to run and the next track to play.
+        vc.stop()
+    except Exception as e:
+        # Don't let stop errors crash the bot — just log them.
+        print(f"Error while trying to skip playback: {e}")
+
+
 # ============================================================
 # PLAYBACK ENGINE
 # ============================================================
