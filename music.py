@@ -226,6 +226,7 @@ async def notify(player: GuildPlayer, embed: discord.Embed) -> None:
 # PLAYBACK ENGINE
 # ============================================================
 
+
 async def _play_next(guild_id: int) -> None:
     player = get_player(guild_id)
     guild = client.get_guild(guild_id)
@@ -244,12 +245,10 @@ async def _play_next(guild_id: int) -> None:
             player.queue.appendleft(finished)
         elif player.loop == "queue":
             player.queue.append(finished)
-            
     player.skip_flag = False
     player.skip_votes.clear()
     player.current = None
 
-    # --- 2nd CODE BLOCK IN ACTION ---
     if not player.queue:
         if finished is not None:
             await notify(player, make_embed(
@@ -259,7 +258,6 @@ async def _play_next(guild_id: int) -> None:
             except Exception:
                 pass
         return
-    # ---------------------------------
 
     track = player.queue.popleft()
     player.current = track
@@ -278,17 +276,17 @@ async def _play_next(guild_id: int) -> None:
     def after(error: Optional[Exception]) -> None:
         if error:
             print(f"Playback error in guild {guild_id}: {error}")
+        # 🔧 This safely routes the loop through the client loop context
         asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
 
-    # --- 1st CODE BLOCK IN ACTION ---
     try:
         audio = discord.FFmpegPCMAudio(track.stream_url, **FFMPEG_OPTIONS)
         vc.play(discord.PCMVolumeTransformer(audio, volume=player.volume), after=after)
         
+        # 🎶 Update Voice Channel Status
         status_text = f"{track.title}"
         if len(status_text) > 50:
             status_text = status_text[:47] + "..."
-        
         try:
             await vc.channel.edit(status=status_text)
         except Exception as e:
@@ -305,42 +303,14 @@ async def _play_next(guild_id: int) -> None:
 
     await notify(player, now_playing_embed(track, player))
 
-    # Stream links expire, so refresh the link if this song waited a while
-    if time.time() - track.fetched_at > STREAM_MAX_AGE:
-        try:
-            data = await extract(track.page_url, allow_playlist=False)
-            if "entries" in data:
-                data = data["entries"][0]
-            track.stream_url = data["url"]
-            track.fetched_at = time.time()
-        except Exception as e:
-            print(f"Could not refresh stream link for {track.title}: {e}")
 
-    def after(error: Optional[Exception]) -> None:
-        if error:
-            print(f"Playback error in guild {guild_id}: {error}")
-        asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
-
+async def play_next(guild_id: int) -> None:
+    """Master controller loop for passing data to the play execution frame."""
     try:
-        audio = discord.FFmpegPCMAudio(track.stream_url, **FFMPEG_OPTIONS)
-        vc.play(discord.PCMVolumeTransformer(audio, volume=player.volume), after=after)
-    except Exception as e:
-        # Only failing to START a track is handled here; skip to the next one.
-        print(f"Could not start {track.title}: {e}")
-        player.current = None
-        await notify(player, make_embed(
-            "❌ Playback Error", 0xE74C3C,
-            f"Couldn't play **{track.title}**: `{str(e)[:200]}`. Skipping."))
         await _play_next(guild_id)
-        return
-
-    await notify(player, now_playing_embed(track, player))
-
-
-def do_skip(vc: discord.VoiceClient, player: GuildPlayer) -> None:
-    player.skip_flag = True    # stops "loop" from putting the track back
-    vc.stop()                  # the after-callback starts the next song
-
+    except Exception:
+        print(f"Music queue error in guild {guild_id}:")
+        traceback.print_exc()
 
 # ============================================================
 # STAY IN THE CHANNEL WHEN EMPTY (silent, not leaving)
