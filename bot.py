@@ -227,8 +227,18 @@ async def on_message(message: discord.Message):
         return
 
     # Configures the 5-minute automated inactivity fallback channel
+    if message.content.lower().startswith("!inactive"):
+        if not (is_dev or is_owner):
+            await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
+            return
+
+        parts = message.content.split()
+        if len(parts) < 2:
+            await message.channel.send("❌ **Usage:** `!inactive <voice_channel_id>`")
+            return
+
         try:
-            # 🔧 FIXED: Target index 1 specifically instead of the list object
+            # 🔧 FIXED: Target elements inside parts cleanly
             channel_id = int(parts[1])
             vc_channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
 
@@ -247,14 +257,14 @@ async def on_message(message: discord.Message):
                 f"**Inactive Channel activated**, "
                 f"I will automatically join **{vc_channel.name}**.")
 
-    # Reply ONLY when the bot is explicitly @mentioned
-    if bot.user in message.mentions and not message.mention_everyone:
-        if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
-            try:
-                await message.reply("Hi")
-            except discord.HTTPException:
-                pass
-            return
+        # THE MISSING PIECE: Make sure these except blocks exist right here to close the try block!
+        except ValueError:
+            await message.channel.send("❌ **Error:** The voice channel ID must be a valid number.")
+        except discord.NotFound:
+            await message.channel.send("❌ **Error:** Could not locate that voice channel ID. Is it hidden from me?")
+        except Exception as e:
+            await message.channel.send(f"❌ **Failed to map channel:** `{e}`")
+        return
 
     # React to the word "vlg"
     if "vlg" in message.content.lower():
