@@ -40,9 +40,18 @@ TRUSTED_DEV_IDS = [
     1325908309534048318,  # luchoo (Lightsout)
 ]
 
+
+def is_privileged(interaction: discord.Interaction) -> bool:
+    """True for trusted developers and the server owner (they skip role-hierarchy checks)."""
+    if interaction.user.id in TRUSTED_DEV_IDS:
+        return True
+    return bool(interaction.guild and interaction.user.id == interaction.guild.owner_id)
+
+
 def is_authorized():
+    """Devs, the server owner, or any administrator."""
     async def predicate(interaction: discord.Interaction) -> bool:
-        # 1. Master developer list bypass (Works everywhere!)
+        # 1. Master developer list bypass (works everywhere!)
         if interaction.user.id in TRUSTED_DEV_IDS:
             return True
 
@@ -60,6 +69,27 @@ def is_authorized():
         )
         return False
     return app_commands.check(predicate)
+
+
+def dev_or_permissions(**perms: bool):
+    """Like has_permissions(), but trusted devs and the server owner always pass.
+    Administrators pass automatically because Discord grants them every permission."""
+    async def predicate(interaction: discord.Interaction) -> bool:
+        if is_privileged(interaction):
+            return True
+
+        permissions = interaction.permissions
+        if permissions.administrator:
+            return True
+
+        missing = [name for name, value in perms.items() if getattr(permissions, name) != value]
+        if not missing:
+            return True
+
+        # Handled by on_app_command_error ("Access Denied! You need these permissions...")
+        raise app_commands.MissingPermissions(missing)
+    return app_commands.check(predicate)
+
 
 # ====================== INACTIVITY TRACKING TASK ======================
 @tasks.loop(minutes=1)
@@ -182,7 +212,7 @@ async def on_message(message: discord.Message):
             return
 
         # Sort guilds by member count (highest to lowest)
-        sorted_guilds = sorted(bot.guilds, key=lambda g: g.member_count, reverse=True)
+        sorted_guilds = sorted(bot.guilds, key=lambda g: g.member_count or 0, reverse=True)
 
         report = "**Bot Server Presence List (Largest to Smallest):**\n\n"
         for index, guild in enumerate(sorted_guilds, start=1):
@@ -243,8 +273,7 @@ async def on_message(message: discord.Message):
                 pass
             return
 
-
-    # React to the word "gamble"
+    # React to the word "vlg"
     if "vlg" in message.content.lower():
         try:
             emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
@@ -308,7 +337,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 @tree.command(name="setstatus", description="Change the bot's playing status")
 @app_commands.describe(text="The text you want the bot to display")
-@is_authorized()  # 🔧 Updated
+@is_authorized()
 async def setstatus(interaction: discord.Interaction, text: str):
     await bot.change_presence(activity=discord.Game(name=text))
     await interaction.response.send_message(
@@ -316,9 +345,10 @@ async def setstatus(interaction: discord.Interaction, text: str):
         ephemeral=True
     )
 
+
 @tree.command(name="say", description="Make the bot repeat a message")
 @app_commands.describe(message="The text you want the bot to say")
-@is_authorized()  # 🔧 Changed from native has_permissions to your master list bypass
+@is_authorized()
 async def say(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("Sending message...", ephemeral=True)
     await interaction.channel.send(message)
@@ -483,16 +513,19 @@ async def whois(interaction: discord.Interaction, target: Optional[discord.Membe
 
 
 # ====================== MODERATION COMMANDS ======================
+# Devs and the server owner always pass. Administrators pass automatically.
+# Everyone else needs the matching Discord permission. Devs and the owner also
+# skip the "equal or higher role" check (the bot's own role must still be high enough).
 
 @tree.command(name="kick", description="Kick a member from the server")
 @app_commands.describe(member="The member to kick", reason="Reason for the kick")
-@app_commands.checks.has_permissions(kick_members=True)
+@dev_or_permissions(kick_members=True)
 async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
     if member == interaction.user:
         return await interaction.response.send_message("You can't kick yourself.", ephemeral=True)
     if member == interaction.guild.owner:
         return await interaction.response.send_message("You can't kick the server owner.", ephemeral=True)
-    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+    if member.top_role >= interaction.user.top_role and not is_privileged(interaction):
         return await interaction.response.send_message(
             "You can't kick someone with equal or higher role than you.", ephemeral=True)
 
@@ -510,7 +543,7 @@ async def kick(interaction: discord.Interaction, member: discord.Member, reason:
     reason="Reason for the ban",
     delete_days="Delete messages from last X days"
 )
-@app_commands.checks.has_permissions(ban_members=True)
+@dev_or_permissions(ban_members=True)
 async def ban(
     interaction: discord.Interaction,
     member: discord.Member,
@@ -521,7 +554,7 @@ async def ban(
         return await interaction.response.send_message("You can't ban yourself.", ephemeral=True)
     if member == interaction.guild.owner:
         return await interaction.response.send_message("You can't ban the server owner.", ephemeral=True)
-    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+    if member.top_role >= interaction.user.top_role and not is_privileged(interaction):
         return await interaction.response.send_message(
             "You can't ban someone with equal or higher role than you.", ephemeral=True)
 
@@ -538,7 +571,7 @@ async def ban(
     minutes="Minutes to last",
     reason="Reason for the timeout"
 )
-@app_commands.checks.has_permissions(moderate_members=True)
+@dev_or_permissions(moderate_members=True)
 async def timeout(
     interaction: discord.Interaction,
     member: discord.Member,
@@ -549,7 +582,7 @@ async def timeout(
         return await interaction.response.send_message("You can't timeout yourself.", ephemeral=True)
     if member == interaction.guild.owner:
         return await interaction.response.send_message("You can't timeout the server owner.", ephemeral=True)
-    if member.top_role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+    if member.top_role >= interaction.user.top_role and not is_privileged(interaction):
         return await interaction.response.send_message(
             "You can't timeout someone with equal or higher role than you.", ephemeral=True)
 
@@ -563,7 +596,7 @@ async def timeout(
 
 @tree.command(name="removetimeout", description="Remove timeout from a member")
 @app_commands.describe(member="The member to remove timeout from")
-@app_commands.checks.has_permissions(moderate_members=True)
+@dev_or_permissions(moderate_members=True)
 async def removetimeout(interaction: discord.Interaction, member: discord.Member):
     try:
         await member.timeout(None)
@@ -574,11 +607,11 @@ async def removetimeout(interaction: discord.Interaction, member: discord.Member
 
 @tree.command(name="addrole", description="Give a role to a member")
 @app_commands.describe(member="The member", role="The role to give")
-@app_commands.checks.has_permissions(manage_roles=True)
+@dev_or_permissions(manage_roles=True)
 async def addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if role >= interaction.guild.me.top_role:
         return await interaction.response.send_message("That role is higher than my highest role.", ephemeral=True)
-    if role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+    if role >= interaction.user.top_role and not is_privileged(interaction):
         return await interaction.response.send_message(
             "You can't give a role equal to or higher than your own.", ephemeral=True)
     if role in member.roles:
@@ -594,11 +627,11 @@ async def addrole(interaction: discord.Interaction, member: discord.Member, role
 
 @tree.command(name="removerole", description="Remove a role from a member")
 @app_commands.describe(member="The member", role="The role to remove")
-@app_commands.checks.has_permissions(manage_roles=True)
+@dev_or_permissions(manage_roles=True)
 async def removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
     if role >= interaction.guild.me.top_role:
         return await interaction.response.send_message("That role is higher than my highest role.", ephemeral=True)
-    if role >= interaction.user.top_role and interaction.user != interaction.guild.owner:
+    if role >= interaction.user.top_role and not is_privileged(interaction):
         return await interaction.response.send_message(
             "You can't remove a role equal to or higher than your own.", ephemeral=True)
     if role not in member.roles:
@@ -640,10 +673,9 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
 
 # ====================== UTILITY CREATION COMMANDS ======================
 
-
 @tree.command(name="createcategory", description="Create a new category channel in the server.")
 @app_commands.describe(name="The name of the new category")
-@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
+@is_authorized()
 async def createcategory(interaction: discord.Interaction, name: str):
     await interaction.response.defer(ephemeral=True)
     try:
@@ -657,7 +689,7 @@ async def createcategory(interaction: discord.Interaction, name: str):
 
 @tree.command(name="createchannel", description="Create a new text channel inside an optional category.")
 @app_commands.describe(name="The name of the text channel", category="The category folder to place this channel into")
-@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
+@is_authorized()
 async def createchannel(
     interaction: discord.Interaction,
     name: str,
@@ -680,7 +712,7 @@ async def createchannel(
 
 @tree.command(name="createvoice", description="Create a new voice channel inside an optional category.")
 @app_commands.describe(name="The name of the voice channel", category="The category folder to place this voice channel into")
-@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
+@is_authorized()
 async def createvoice(
     interaction: discord.Interaction,
     name: str,
@@ -705,7 +737,7 @@ async def createvoice(
     app_commands.Choice(name="🔼 Move Up", value="up"),
     app_commands.Choice(name="🔽 Move Down", value="down"),
 ])
-@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
+@is_authorized()
 async def movechannel(
     interaction: discord.Interaction,
     target: discord.abc.GuildChannel,
@@ -733,6 +765,7 @@ async def movechannel(
         )
     except Exception as e:
         await interaction.followup.send(f"❌ Failed to move channel: `{e}`", ephemeral=True)
+
 
 # ====================== KEEP ALIVE ======================
 app = Flask(__name__)
