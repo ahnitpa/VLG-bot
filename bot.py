@@ -243,23 +243,9 @@ async def on_message(message: discord.Message):
                 pass
             return
 
-    # Random interrupter (10% chance)
-    if random.random() < 0.10:
-        funny_responses = [
-            "Yeah",
-            "silly.",
-            "Sir, this is a Wendy's.",
-            "what",
-            "funny one.",
-            "why?",
-        ]
-        try:
-            await message.reply(random.choice(funny_responses))
-        except discord.HTTPException:
-            pass
 
     # React to the word "gamble"
-    if "gamble" in message.content.lower():
+    if "vlg" in message.content.lower():
         try:
             emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
             await message.add_reaction(emoji if emoji else "❤️")
