@@ -654,9 +654,10 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
 
 # ====================== UTILITY CREATION COMMANDS ======================
 
+
 @tree.command(name="createcategory", description="Create a new category channel in the server.")
 @app_commands.describe(name="The name of the new category")
-@app_commands.checks.has_permissions(manage_channels=True)
+@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
 async def createcategory(interaction: discord.Interaction, name: str):
     await interaction.response.defer(ephemeral=True)
     try:
@@ -669,11 +670,8 @@ async def createcategory(interaction: discord.Interaction, name: str):
 
 
 @tree.command(name="createchannel", description="Create a new text channel inside an optional category.")
-@app_commands.describe(
-    name="The name of the text channel",
-    category="The category folder to place this channel into"
-)
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.describe(name="The name of the text channel", category="The category folder to place this channel into")
+@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
 async def createchannel(
     interaction: discord.Interaction,
     name: str,
@@ -695,11 +693,8 @@ async def createchannel(
 
 
 @tree.command(name="createvoice", description="Create a new voice channel inside an optional category.")
-@app_commands.describe(
-    name="The name of the voice channel",
-    category="The category folder to place this voice channel into"
-)
-@app_commands.checks.has_permissions(manage_channels=True)
+@app_commands.describe(name="The name of the voice channel", category="The category folder to place this voice channel into")
+@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
 async def createvoice(
     interaction: discord.Interaction,
     name: str,
@@ -719,15 +714,12 @@ async def createvoice(
 
 
 @tree.command(name="movechannel", description="Move a channel, voice channel, or category up or down.")
-@app_commands.describe(
-    target="The channel, voice channel, or category folder you want to move",
-    direction="Choose whether to nudge it Up or Down"
-)
+@app_commands.describe(target="The channel, voice channel, or category folder you want to move", direction="Choose whether to nudge it Up or Down")
 @app_commands.choices(direction=[
     app_commands.Choice(name="🔼 Move Up", value="up"),
     app_commands.Choice(name="🔽 Move Down", value="down"),
 ])
-@app_commands.checks.has_permissions(manage_channels=True)
+@is_authorized() # 🔧 FIXED: Swapped out native check for master developer bypass
 async def movechannel(
     interaction: discord.Interaction,
     target: discord.abc.GuildChannel,
@@ -755,7 +747,6 @@ async def movechannel(
         )
     except Exception as e:
         await interaction.followup.send(f"❌ Failed to move channel: `{e}`", ephemeral=True)
-
 
 # ====================== KEEP ALIVE ======================
 app = Flask(__name__)
