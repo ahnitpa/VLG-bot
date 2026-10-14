@@ -680,7 +680,7 @@ async def replay(interaction: discord.Interaction):
 
     player.queue.appendleft(player.current)
     do_skip(vc, player)
-    await interaction.response.send_message(f"🔄 Replaying **{player.queue[0].title}**")
+    await interaction.response.send_message(f"🔄 Replaying **{player.current.title}**")
 
 
 # ============================================================
