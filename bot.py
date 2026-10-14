@@ -40,24 +40,26 @@ TRUSTED_DEV_IDS = [
     1325908309534048318,  # luchoo (Lightsout)
 ]
 
-
-def is_server_owner():
+def is_authorized():
     async def predicate(interaction: discord.Interaction) -> bool:
-        # Master developer list bypass
+        # 1. Master developer list bypass (Works everywhere!)
         if interaction.user.id in TRUSTED_DEV_IDS:
             return True
 
-        # Otherwise, fall back to the actual server owner
+        # 2. Server Owner bypass
         if interaction.guild and interaction.user.id == interaction.guild.owner_id:
             return True
 
+        # 3. Regular Server Administrators bypass
+        if interaction.guild and interaction.user.guild_permissions.administrator:
+            return True
+
         await interaction.response.send_message(
-            "Only the server owner or an authorized developer can use this command. (error code #1)",
+            "❌ **Access Denied:** Only the Server Owner, an Administrator, or an authorized developer can use this command.",
             ephemeral=True
         )
         return False
     return app_commands.check(predicate)
-
 
 # ====================== INACTIVITY TRACKING TASK ======================
 @tasks.loop(minutes=1)
@@ -320,7 +322,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 @tree.command(name="setstatus", description="Change the bot's playing status")
 @app_commands.describe(text="The text you want the bot to display")
-@is_server_owner()
+@is_authorized()  # 🔧 Updated
 async def setstatus(interaction: discord.Interaction, text: str):
     await bot.change_presence(activity=discord.Game(name=text))
     await interaction.response.send_message(
@@ -328,10 +330,9 @@ async def setstatus(interaction: discord.Interaction, text: str):
         ephemeral=True
     )
 
-
 @tree.command(name="say", description="Make the bot repeat a message")
 @app_commands.describe(message="The text you want the bot to say")
-@app_commands.checks.has_permissions(administrator=True)
+@is_authorized()  # 🔧 Changed from native has_permissions to your master list bypass
 async def say(interaction: discord.Interaction, message: str):
     await interaction.response.send_message("Sending message...", ephemeral=True)
     await interaction.channel.send(message)
