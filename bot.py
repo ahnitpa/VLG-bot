@@ -221,7 +221,7 @@ async def on_message(message: discord.Message):
             }
 
             await message.channel.send(
-                f"**Inactivity Routing Activated!** If I sit completely unused for **5 minutes**, "
+                f"**Inactive Channel activated**, "
                 f"I will automatically join **{vc_channel.name}**.")
 
         except ValueError:
@@ -327,41 +327,6 @@ async def setstatus(interaction: discord.Interaction, text: str):
         f"Status successfully updated to: **Playing {text}**",
         ephemeral=True
     )
-
-
-@tree.command(name="gamble", description="Take a 1-in-5 chance to win a special role!")
-@app_commands.checks.cooldown(1, 60.0, key=lambda i: i.user.id)
-async def gamble(interaction: discord.Interaction):
-    member = interaction.user
-    role = interaction.guild.get_role(ROLE_ID)
-
-    if not role:
-        await interaction.response.send_message(
-            "The target role was not found (error code 3)", ephemeral=True)
-        return
-
-    if role in member.roles:
-        await interaction.response.send_message(
-            "You already have this role! (error code *e10*)", ephemeral=True)
-        return
-
-    roll = random.randint(1, 5)
-    if roll == 1:
-        try:
-            await member.add_roles(role)
-            await interaction.response.send_message(
-                f"**Lucky!** You rolled a {roll}/5 and won the **{role.name}** role!"
-            )
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "I don't have permission to give that role. Drag my role higher! (error code 3)",
-                ephemeral=True
-            )
-    else:
-        await interaction.response.send_message(
-            f"**Unlucky!** You rolled a {roll}/5. Try again next time!",
-            ephemeral=True
-        )
 
 
 @tree.command(name="say", description="Make the bot repeat a message")
