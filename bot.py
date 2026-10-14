@@ -29,7 +29,7 @@ tree = app_commands.CommandTree(bot)
 music.setup(bot, tree)
 
 synced_once = False
-
+inactive_config = {}
 
 # ====================== MASTER LIST ======================
 
@@ -142,6 +142,46 @@ async def on_message(message: discord.Message):
 
         await message.channel.send(report)
         return
+    # Configures the 5-minute automated inactivity fallback channel
+    if message.content.lower().startswith("!inactive"):
+        is_dev = message.author.id in TRUSTED_DEV_IDS
+        is_owner = message.guild and message.author.id == message.guild.owner_id
+        
+        if not (is_dev or is_owner):
+            await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
+            return
+
+        # Split the content to parse out the targeted voice channel ID
+        parts = message.content.split()
+        if len(parts) < 2:
+            await message.channel.send("❌ **Usage:** `!inactive <voice_channel_id>`")
+            return
+
+        try:
+            channel_id = int(parts[1])
+            vc_channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
+            
+            if not isinstance(vc_channel, discord.VoiceChannel):
+                await message.channel.send("❌ **Error:** That ID belongs to a text or category channel. Please supply a valid Voice Channel ID.")
+                return
+
+            # Store the setting for this server
+            guild_id = message.guild.id
+            inactive_config[guild_id] = {
+                "channel_id": vc_channel.id,
+                "idle_since": None  # Will be tracked dynamically by our background loop
+            }
+
+            await message.channel.send(f"**Inactivity Routing Activated!** If I sit completely unused for **5 minutes**, I will automatically join **{vc_channel.name}**.")
+            
+        except ValueError:
+            await message.channel.send("❌ **Error:** The voice channel ID must be a valid number.")
+        except discord.NotFound:
+            await message.channel.send("❌ **Error:** Could not locate that voice channel ID. Is it hidden from me?")
+        except Exception as e:
+            await message.channel.send(f"❌ **Failed to map channel:** `{e}`")
+        return
+
 # ====================== ADVANCED LOGGING MODULE ======================
 
 
@@ -734,6 +774,16 @@ async def movechannel(interaction: discord.Interaction, target: discord.abc.Guil
 
 
 # ====================== START ======================
+@bot.event
+async def on_ready():
+    global synced_once
+    print(f"Logged in as {bot.user} ({bot.user.id})")
+    
+    # Fire up the loop thread if it isn't running yet
+    if not check_inactivity_timers.is_running():
+        check_inactivity_timers.start()
+        print("Background inactivity tracking routine setup.")
+
 if __name__ == "__main__":
     token = os.environ.get("TOKEN")
     if not token:
