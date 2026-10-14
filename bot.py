@@ -142,9 +142,10 @@ async def on_ready():
     print(f"Logged in as {bot.user} ({bot.user.id})")
     print("Registered commands:", sorted(c.name for c in tree.get_commands()))
 
+    # ⏰ Start the background loop thread if it isn't running yet
     if not check_inactivity_timers.is_running():
         check_inactivity_timers.start()
-        print("⏰ Background inactivity tracking routine initialized.")
+        print("Background inactivity tracking initialized.")
 
     if not synced_once:
         synced_once = True
@@ -154,7 +155,6 @@ async def on_ready():
             print(f"✅ Success! Synced {len(synced)} commands globally.")
         except Exception:
             traceback.print_exc()
-
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -227,17 +227,8 @@ async def on_message(message: discord.Message):
         return
 
     # Configures the 5-minute automated inactivity fallback channel
-    if message.content.lower().startswith("!inactive"):
-        if not (is_dev or is_owner):
-            await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
-            return
-
-        parts = message.content.split()
-        if len(parts) < 2:
-            await message.channel.send("❌ **Usage:** `!inactive <voice_channel_id>`")
-            return
-
         try:
+            # 🔧 FIXED: Target index 1 specifically instead of the list object
             channel_id = int(parts[1])
             vc_channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
 
@@ -249,20 +240,12 @@ async def on_message(message: discord.Message):
 
             inactive_config[message.guild.id] = {
                 "channel_id": vc_channel.id,
-                "idle_since": None,  # Tracked dynamically by the background loop
+                "idle_since": None,
             }
 
             await message.channel.send(
                 f"**Inactive Channel activated**, "
                 f"I will automatically join **{vc_channel.name}**.")
-
-        except ValueError:
-            await message.channel.send("❌ **Error:** The voice channel ID must be a valid number.")
-        except discord.NotFound:
-            await message.channel.send("❌ **Error:** Could not locate that voice channel ID. Is it hidden from me?")
-        except Exception as e:
-            await message.channel.send(f"❌ **Failed to map channel:** `{e}`")
-        return
 
     # Reply ONLY when the bot is explicitly @mentioned
     if bot.user in message.mentions and not message.mention_everyone:
@@ -786,6 +769,7 @@ def keep_alive():
 
 
 # ====================== START ======================
+
 if __name__ == "__main__":
     token = os.environ.get("TOKEN")
     if not token:
