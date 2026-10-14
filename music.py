@@ -62,11 +62,13 @@ if os.path.exists(COOKIE_SRC):
 elif os.path.exists("cookies.txt"):
     YTDL_OPTIONS["cookiefile"] = "cookies.txt"
 
+
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",
+    "options": "-vn -filter:a asetrate=48000",
     "executable": FFMPEG_PATH,
 }
+
 
 # YouTube stream links expire; refresh them if a song waited this long (seconds).
 STREAM_MAX_AGE = 300
