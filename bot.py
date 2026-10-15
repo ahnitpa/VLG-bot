@@ -269,7 +269,7 @@ async def on_message(message: discord.Message):
     # React to the word "vlg"
     if "vlg" in message.content.lower():
         try:
-            emoji = bot.get_emoji()
+            emoji = bot.get_emoji(1559616784200499291)
             await message.add_reaction(emoji if emoji else "")
         except discord.HTTPException:
             pass
