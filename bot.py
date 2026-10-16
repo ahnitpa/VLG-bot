@@ -15,7 +15,7 @@ import music
 
 # ====================== CONFIG ======================
 ROLE_ID = 1535617025744048268
-CUSTOM_EMOJI_ID = 1548670697486688358
+CUSTOM_EMOJI_ID = 1559616784200499291
 
 # ====================== BOT SETUP ======================
 intents = discord.Intents.default()
@@ -718,7 +718,7 @@ async def on_message(message: discord.Message):
     # React to the word "vlg"
     if "vlg" in content_lower:
         try:
-            emoji = bot.get_emoji(CUSTOM_EMOJI_ID)
+            emoji = bot.get_emoji(1559616784200499291)
             await message.add_reaction(emoji if emoji else "")
         except discord.HTTPException:
             pass
