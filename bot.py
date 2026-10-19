@@ -285,6 +285,47 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         await bot.change_presence(activity=discord.Game(name=status_text))
         return await send(f"✅ Status updated to: **Playing {status_text}**")
 
+            # --- 13. PING (LATENCY PERFORMANCE) ---
+        if command == "ping":
+            start_time = time.time()
+            # Send an initial message to calculate round-trip processing time
+            msg = await message.channel.send("Calculating performance spikes...")
+            end_time = time.time()
+            
+            # API gateway WebSocket latency
+            gateway_ping = round(bot.latency * 1000)
+            # Full chat routing process speed
+            message_ping = round((end_time - start_time) * 1000)
+            
+            await msg.edit(content=(
+                f"**Pong!**\n"
+                f"**API Gateway Latency:** `{gateway_ping}ms`\n"
+                f"**Message Processing Speed:** `{message_ping}ms`"
+            ))
+            return
+
+        # --- 14. CACHE CLEAN (DEVELOPER ONLY) ---
+        if command == "cacheclean":
+            if not is_dev:
+                await message.channel.send("**Access Denied:** Not a dev.")
+                return
+                
+            status_msg = await message.channel.send("*Initializing memory array cache purging...*")
+            
+            try:
+                # 1. Clear internal discord.py user/member message caches safely
+                bot._connection._messages.clear()
+                
+                # 2. Force Python's core garbage collector to dump unlinked memory states immediately
+                import gc
+                gc.collect()
+                
+                await status_msg.edit(content="✅ **Cache Clean Complete!**")
+            except Exception as e:
+                await status_msg.edit(content=f"❌ **Purge Failed:** Internal fault tracking error: `{e}`")
+            return
+
+
     # --- SAY ---
     if command == "say":
         if not message_is_authorized(message):
