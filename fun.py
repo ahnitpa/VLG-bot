@@ -26,6 +26,9 @@ from discord import app_commands
 DB_PATH = os.environ.get("DB_PATH", "bot.db")
 COIN = "🪙"
 
+# Filled in by setup(); lets the !v prefix handler reuse the slash command code
+_commands: dict = {}
+
 DAILY_COOLDOWN = 86400
 WORK_COOLDOWN = 3600
 STEAL_COOLDOWN = 600
@@ -1055,3 +1058,287 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree) -> None:
             return await reply_error(interaction, "❌ Give me at least two options separated by commas.")
         await interaction.response.send_message(
             f"🤔 I choose... **{random.choice(parts)}**!", allowed_mentions=discord.AllowedMentions.none())
+
+
+# ====================== PREFIX (!v) SUPPORT ======================
+# Every slash command above is also available as `!v <command> ...`. The prefix handler
+# builds a small stand-in for the Interaction object and calls the very same command code,
+# so both versions always behave identically. Buttons (blackjack, trivia, ...) work as usual.
+PREFIX_HELP = (
+    "**🎮 Economy & fun (`!v`)**\n"
+    "**Economy:** `balance [@m]`, `daily`, `work`, `pay @m <amt>`, `deposit <amt|all>`, "
+    "`withdraw <amt|all>`, `steal @m`, `leaderboard [coins|xp]`\n"
+    "**Levels:** `rank [@m]`, `levelrole add <level> @role`, `levelrole remove <level>`, `levelrole list`\n"
+    "**Shop:** `shop`, `buy <item> [qty]`, `inventory [@m]`, `use <item>`\n"
+    "**Games:** `slots <bet>`, `betflip <bet> <heads|tails>`, `blackjack <bet>`, `rps [bet]`, "
+    "`tictactoe @m`, `trivia`\n"
+    "**Random:** `cat`, `dog`, `meme`, `joke`, `fact`, `ship @a [@b]`, `choose a, b, c`\n"
+    "**Admin:** `addcoins @m <amount>`\n"
+    "Bets accept `all`. Aliases: `bal`, `lb`, `inv`, `bj`, `ttt`."
+)
+
+_ALIASES = {"bal": "balance", "lb": "leaderboard", "top": "leaderboard", "inv": "inventory",
+            "bj": "blackjack", "ttt": "tictactoe", "bf": "betflip", "dep": "deposit",
+            "with": "withdraw", "lvl": "rank", "level": "rank"}
+
+
+class _PrefixResponse:
+    """Mimics interaction.response for messages sent with the prefix."""
+
+    def __init__(self, ctx: "PrefixContext"):
+        self.ctx = ctx
+        self._done = False
+
+    def is_done(self) -> bool:
+        return self._done
+
+    async def defer(self, **_) -> None:
+        self._done = True
+
+    async def send_message(self, content=None, *, embed=None, view=None, ephemeral=False,
+                           allowed_mentions=None, **_) -> None:
+        kwargs = {k: v for k, v in (("content", content), ("embed", embed), ("view", view),
+                                    ("allowed_mentions", allowed_mentions)) if v is not None}
+        if ephemeral:  # prefix messages can't be private, so reply quietly instead
+            try:
+                sent = await self.ctx.message.reply(mention_author=False, **kwargs)
+            except discord.HTTPException:
+                sent = await self.ctx.channel.send(**kwargs)
+        else:
+            sent = await self.ctx.channel.send(**kwargs)
+        self.ctx.sent = sent
+        self._done = True
+
+
+class _PrefixFollowup:
+    def __init__(self, ctx: "PrefixContext"):
+        self.ctx = ctx
+
+    async def send(self, content=None, *, embed=None, view=None, wait=False, ephemeral=False,
+                   allowed_mentions=None, **_):
+        kwargs = {k: v for k, v in (("content", content), ("embed", embed), ("view", view),
+                                    ("allowed_mentions", allowed_mentions)) if v is not None}
+        sent = await self.ctx.channel.send(**kwargs)
+        self.ctx.sent = sent
+        return sent
+
+
+class PrefixContext:
+    """Stand-in for discord.Interaction, built from a normal message."""
+
+    def __init__(self, message: discord.Message):
+        self.message = message
+        self.guild = message.guild
+        self.channel = message.channel
+        self.user = message.author
+        self.sent: Optional[discord.Message] = None
+        self.response = _PrefixResponse(self)
+        self.followup = _PrefixFollowup(self)
+
+    async def original_response(self) -> Optional[discord.Message]:
+        return self.sent
+
+    async def edit_original_response(self, **kwargs) -> None:
+        if self.sent:
+            await self.sent.edit(**kwargs)
+
+
+class _BadArgs(Exception):
+    """Raised by parsers; an empty message means 'show the usage line'."""
+
+
+def _need(args: list, count: int) -> None:
+    if len(args) < count:
+        raise _BadArgs()
+
+
+def _id_from(token: str, chars: str) -> Optional[int]:
+    digits = token.strip(chars)
+    return int(digits) if digits.isdigit() else None
+
+
+def _member_arg(message: discord.Message, token: str) -> discord.Member:
+    member_id = _id_from(token, "<@!>")
+    member = message.guild.get_member(member_id) if member_id else None
+    if member is None:
+        raise _BadArgs("❌ I couldn't find that member. Mention them or use their ID.")
+    return member
+
+
+def _opt_member(message: discord.Message, args: list, index: int = 0) -> Optional[discord.Member]:
+    return _member_arg(message, args[index]) if len(args) > index else None
+
+
+def _int_arg(token: str, lo: int, hi: int, what: str = "amount") -> int:
+    try:
+        n = int(token.replace(",", ""))
+    except ValueError:
+        raise _BadArgs(f"❌ `{token}` isn't a valid {what}.")
+    if not lo <= n <= hi:
+        raise _BadArgs(f"❌ The {what} must be between {lo:,} and {hi:,}.")
+    return n
+
+
+def _wallet(message: discord.Message) -> int:
+    return get_user(message.guild.id, message.author.id)["coins"]
+
+
+def _amount_arg(message: discord.Message, token: str) -> int:
+    if token.lower() in ("all", "max"):
+        if _wallet(message) < 1:
+            raise _BadArgs("❌ Your wallet is empty.")
+        return _wallet(message)
+    return _int_arg(token, 1, 10 ** 12)
+
+
+def _bet_arg(message: discord.Message, token: str, lo: int = 10) -> int:
+    if token.lower() in ("all", "max"):
+        n = min(_wallet(message), MAX_BET)
+        if n < lo:
+            raise _BadArgs("❌ You don't have enough coins in your wallet.")
+        return n
+    return _int_arg(token, lo, MAX_BET, "bet")
+
+
+def _item_arg(tokens: list, only: Optional[list] = None) -> app_commands.Choice:
+    key = "_".join(tokens).lower()
+    if key not in SHOP or (only and key not in only):
+        raise _BadArgs("❌ Unknown item. Options: " + ", ".join(only or list(SHOP)))
+    return app_commands.Choice(name=SHOP[key]["name"], value=key)
+
+
+def _p_leaderboard(m, a):
+    if a and a[0].lower() in ("xp", "level", "levels", "lvl"):
+        return {"kind": app_commands.Choice(name="Level / XP", value="xp")}
+    return {"kind": None}
+
+
+def _p_buy(m, a):
+    _need(a, 1)
+    tokens = list(a)
+    quantity = 1
+    if len(tokens) > 1 and tokens[-1].isdigit():
+        quantity = _int_arg(tokens.pop(), 1, 20, "quantity")
+    return {"item": _item_arg(tokens), "quantity": quantity}
+
+
+def _p_betflip(m, a):
+    _need(a, 2)
+    side = a[1].lower()
+    if side in ("h", "heads"):
+        choice = app_commands.Choice(name="Heads", value="heads")
+    elif side in ("t", "tails"):
+        choice = app_commands.Choice(name="Tails", value="tails")
+    else:
+        raise _BadArgs()
+    return {"bet": _bet_arg(m, a[0]), "side": choice}
+
+
+def _p_levelrole_add(m, a):
+    _need(a, 2)
+    role_id = _id_from(a[1], "<@&>")
+    role = m.guild.get_role(role_id) if role_id else None
+    if role is None:
+        raise _BadArgs("❌ I couldn't find that role. Mention it or use its ID.")
+    return {"level": _int_arg(a[0], 1, 500, "level"), "role": role}
+
+
+def _p_pay(m, a):
+    _need(a, 2)
+    return {"member": _member_arg(m, a[0]), "amount": _amount_arg(m, a[1])}
+
+
+def _p_ship(m, a):
+    _need(a, 1)
+    return {"first": _member_arg(m, a[0]), "second": _opt_member(m, a, 1)}
+
+
+def _p_addcoins(m, a):
+    _need(a, 2)
+    return {"member": _member_arg(m, a[0]), "amount": _int_arg(a[1], -1_000_000, 1_000_000)}
+
+
+def _p_choose(m, a):
+    _need(a, 1)
+    return {"options": " ".join(a)}
+
+
+def _p_use(m, a):
+    _need(a, 1)
+    return {"item": _item_arg(a, ["xp_boost", "mystery_box"])}
+
+
+def _p_deposit(m, a):
+    _need(a, 1)
+    return {"amount": a[0]}
+
+
+# command -> (usage, argument parser, admin only)
+_PREFIX = {
+    "balance": ("balance [@member]", lambda m, a: {"member": _opt_member(m, a)}, False),
+    "rank": ("rank [@member]", lambda m, a: {"member": _opt_member(m, a)}, False),
+    "inventory": ("inventory [@member]", lambda m, a: {"member": _opt_member(m, a)}, False),
+    "daily": ("daily", lambda m, a: {}, False),
+    "work": ("work", lambda m, a: {}, False),
+    "shop": ("shop", lambda m, a: {}, False),
+    "pay": ("pay @member <amount|all>", _p_pay, False),
+    "deposit": ("deposit <amount|half|all>", _p_deposit, False),
+    "withdraw": ("withdraw <amount|half|all>", _p_deposit, False),
+    "steal": ("steal @member", lambda m, a: (_need(a, 1), {"target": _member_arg(m, a[0])})[1], False),
+    "leaderboard": ("leaderboard [coins|xp]", _p_leaderboard, False),
+    "buy": ("buy <item> [quantity]", _p_buy, False),
+    "use": ("use <xp_boost|mystery_box>", _p_use, False),
+    "slots": ("slots <bet|all>", lambda m, a: (_need(a, 1), {"bet": _bet_arg(m, a[0])})[1], False),
+    "betflip": ("betflip <bet|all> <heads|tails>", _p_betflip, False),
+    "blackjack": ("blackjack <bet|all>", lambda m, a: (_need(a, 1), {"bet": _bet_arg(m, a[0])})[1], False),
+    "rps": ("rps [bet]", lambda m, a: {"bet": _bet_arg(m, a[0], 0) if a else 0}, False),
+    "tictactoe": ("tictactoe @opponent",
+                  lambda m, a: (_need(a, 1), {"opponent": _member_arg(m, a[0])})[1], False),
+    "trivia": ("trivia", lambda m, a: {}, False),
+    "cat": ("cat", lambda m, a: {}, False),
+    "dog": ("dog", lambda m, a: {}, False),
+    "meme": ("meme", lambda m, a: {}, False),
+    "joke": ("joke", lambda m, a: {}, False),
+    "fact": ("fact", lambda m, a: {}, False),
+    "ship": ("ship @member [@member]", _p_ship, False),
+    "choose": ("choose <option, option, ...>", _p_choose, False),
+    "addcoins": ("addcoins @member <amount>", _p_addcoins, True),
+    "levelrole add": ("levelrole add <level> @role", _p_levelrole_add, True),
+    "levelrole remove": ("levelrole remove <level>",
+                         lambda m, a: (_need(a, 1), {"level": _int_arg(a[0], 1, 500, "level")})[1], True),
+    "levelrole list": ("levelrole list", lambda m, a: {}, False),
+}
+
+
+async def handle_prefix(message: discord.Message, command: str, args: list, privileged: bool = False) -> bool:
+    """Call from your `!v` handler. Returns True if the command belonged to this module.
+
+    `privileged` should be True for devs / the owner / admins so they can use admin commands.
+    """
+    if message.guild is None or not _commands:
+        return False
+
+    args = list(args)
+    command = command.lower()
+    command = _ALIASES.get(command, command)
+    if command == "levelrole":
+        command = f"levelrole {args.pop(0).lower() if args else 'list'}"
+
+    entry = _PREFIX.get(command)
+    if entry is None or command not in _commands:
+        return False
+    usage, parser, admin_only = entry
+
+    send = message.channel.send
+    if admin_only and not (privileged or message.author.guild_permissions.manage_guild):
+        await send("❌ **Access Denied:** You need the `Manage Server` permission.")
+        return True
+
+    try:
+        kwargs = parser(message, args)
+    except _BadArgs as e:
+        await send(str(e) or f"❌ **Usage:** `!v {usage}`")
+        return True
+
+    await _commands[command].callback(PrefixContext(message), **kwargs)
+    return True
