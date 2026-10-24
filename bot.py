@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import tasks
 from flask import Flask
 
+import fun
 import music
 
 # ====================== CONFIG ======================
@@ -29,6 +30,9 @@ tree = app_commands.CommandTree(bot)
 
 # Registers music commands (slash commands)
 music.setup(bot, tree)
+
+# Registers the economy / leveling / games / fun commands (slash + `!v` prefix)
+fun.setup(bot, tree)
 
 # Global configuration variable trackers
 synced_once = False
@@ -267,6 +271,10 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
     # determine developer flag locally
     is_dev = author.id in TRUSTED_DEV_IDS
 
+    # Economy / leveling / games / fun commands live in fun.py
+    if await fun.handle_prefix(message, command, args, privileged=message_is_authorized(message)):
+        return
+
     async def deny_admin():
         await send("❌ **Access Denied:** Missing privileges.")
 
@@ -276,6 +284,7 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
     # --- HELP ---
     if command == "help":
         await send(PREFIX_HELP)
+        await send(fun.PREFIX_HELP)
         return
 
     # --- SET STATUS ---
@@ -351,19 +360,7 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         except discord.Forbidden:
             return await send("🪙 **Tails!** You should be timed out, but your permissions protected you.")
 
-    # --- STEAL ---
-    if command == "steal":
-        target, _ = resolve_member(message, args)
-        if target is None:
-            return await send("❌ **Usage:** `!v steal @member`")
-        if target == author:
-            return await send("You tried robbing yourself... How does that feel?")
-        if target == bot.user:
-            return await send("Firewall completely vaporized your wallet.")
-        if random.choice(["success", "fail"]) == "success":
-            amount = random.randint(100, 1000)
-            return await send(f"**Success!** {author.mention} stole **{amount} coins** from {target.mention}!")
-        return await send(f"**CAUGHT STEALING!** {author.mention} tried to rob {target.mention} and went to imaginary jail!")
+    # (`steal` now lives in fun.py with real coins)
 
     # --- RATE ---
     if command == "rate":
@@ -643,6 +640,12 @@ async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
 
+    # Chat XP / leveling (never lets a leveling error break normal commands)
+    try:
+        await fun.on_message(message)
+    except Exception:
+        traceback.print_exc()
+
     is_dev = message.author.id in TRUSTED_DEV_IDS
     is_owner = message.author.id == message.guild.owner_id
     content_lower = message.content.lower()
@@ -858,27 +861,7 @@ async def coinflip(interaction: discord.Interaction):
             )
 
 
-@tree.command(name="steal", description="Attempt to steal imaginary coins!")
-@app_commands.describe(target="The server member you want to rob")
-async def steal(interaction: discord.Interaction, target: discord.Member):
-    if target == interaction.user:
-        await interaction.response.send_message("You tried robbing yourself... (error code 8)", ephemeral=True)
-        return
-    if target == bot.user:
-        await interaction.response.send_message(
-            "Firewall completely vaporized your wallet. (error code *e11*)", ephemeral=True)
-        return
-
-    if random.choice(["success", "fail"]) == "success":
-        amount = random.randint(100, 1000)
-        await interaction.response.send_message(
-            f"**Success!** {interaction.user.mention} stole **{amount} coins** from {target.mention}!"
-        )
-    else:
-        await interaction.response.send_message(
-            f"**CAUGHT STEALING!** {interaction.user.mention} tried to rob {target.mention} and went to imaginary jail!"
-        )
-
+# (`/steal` now lives in fun.py with real coins)
 
 @tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
 @app_commands.describe(thing="The object, person, or idea you want rated")
