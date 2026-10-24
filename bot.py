@@ -1,1164 +1,1344 @@
+"""
+fun.py - Fun & engagement module (economy, leveling, shop, gambling, mini-games, content).
+
+Hook it into your main file with:
+    import fun
+    fun.setup(bot, tree)                # right after music.setup(bot, tree)
+and, inside your on_message (after the bot/guild guard):
+    await fun.on_message(message)       # gives XP for chatting
+
+Data is stored in SQLite (default file: bot.db, override with the DB_PATH env var).
+"""
+import asyncio
+import hashlib
 import os
 import random
+import sqlite3
 import time
-import traceback
-from datetime import timedelta
-from threading import Thread
 from typing import Optional
+from urllib.parse import unquote
 
+import aiohttp
 import discord
 from discord import app_commands
-from discord.ext import tasks
-from flask import Flask
-
-import fun
-import music
 
 # ====================== CONFIG ======================
-ROLE_ID = 1535617025744048268
-CUSTOM_EMOJI_ID = 1559616784200499291
+DB_PATH = os.environ.get("DB_PATH", "bot.db")
+COIN = "🪙"
 
-# ====================== BOT SETUP ======================
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True
-intents.guilds = True
-intents.voice_states = True
+# Filled in by setup(); lets the !v prefix handler reuse the slash command code
+_commands: dict = {}
 
-bot = discord.Client(intents=intents)
-tree = app_commands.CommandTree(bot)
+DAILY_COOLDOWN = 86400
+WORK_COOLDOWN = 3600
+STEAL_COOLDOWN = 600
+XP_COOLDOWN = 60
+MAX_BET = 10000
 
-# Registers music commands (slash commands)
-music.setup(bot, tree)
-
-# Registers the economy / leveling / games / fun commands (slash + `!v` prefix)
-fun.setup(bot, tree)
-
-# Global configuration variable trackers
-synced_once = False
-inactive_config = {}
-
-# ====================== MASTER DEV LIST ======================
-TRUSTED_DEV_IDS = [
-    1151184036681752576,  # pepper
-    1373999565312888842,  # ahnitpa
-    1325908309534048318,  # luchoo (Lightsout)
-]
-
-
-# ====================== PERMISSION HELPERS ======================
-def is_privileged_user(user: discord.abc.User, guild: Optional[discord.Guild]) -> bool:
-    """Trusted developers and the server owner (they also skip role-hierarchy checks)."""
-    if user.id in TRUSTED_DEV_IDS:
-        return True
-    return bool(guild and user.id == guild.owner_id)
-
-
-def is_authorized_user(user: discord.Member, guild: Optional[discord.Guild]) -> bool:
-    """Developer, owner, or any administrator."""
-    if is_privileged_user(user, guild):
-        return True
-    return bool(guild and user.guild_permissions.administrator)
-
-
-def message_is_authorized(message: discord.Message) -> bool:
-    return is_authorized_user(message.author, message.guild)
-
-
-def has_mod_perms(message: discord.Message, perm_name: str) -> bool:
-    """Dev/owner/admin always pass; everyone else needs the named permission."""
-    if is_authorized_user(message.author, message.guild):
-        return True
-    return bool(getattr(message.author.guild_permissions, perm_name, False))
-
-
-def hierarchy_error(actor: discord.Member, target: discord.Member,
-                    guild: discord.Guild, verb: str) -> Optional[str]:
-    """Shared safety checks for kick / ban / timeout (slash and prefix)."""
-    if target == actor:
-        return f"You can't {verb} yourself."
-    if target == guild.owner:
-        return f"You can't {verb} the server owner."
-    if target.top_role >= actor.top_role and not is_privileged_user(actor, guild):
-        return f"You can't {verb} someone with equal or higher role than you."
-    return None
-
-
-# ----- slash-command check decorators -----
-def is_authorized():
-    """Devs, the server owner, or any administrator."""
-    async def predicate(interaction: discord.Interaction) -> bool:
-        if is_authorized_user(interaction.user, interaction.guild):
-            return True
-
-        await interaction.response.send_message(
-            "❌ **Access Denied:** Only the Server Owner, an Administrator, or an authorized developer can use this command.",
-            ephemeral=True
-        )
-        return False
-    return app_commands.check(predicate)
-
-
-def dev_or_permissions(**perms: bool):
-    """Like has_permissions(), but trusted devs and the server owner always pass.
-    Administrators pass automatically because Discord grants them every permission."""
-    async def predicate(interaction: discord.Interaction) -> bool:
-        if is_privileged_user(interaction.user, interaction.guild):
-            return True
-
-        permissions = interaction.permissions
-        if permissions.administrator:
-            return True
-
-        missing = [name for name, value in perms.items() if getattr(permissions, name) != value]
-        if not missing:
-            return True
-
-        # Handled by on_app_command_error ("Access Denied! You need these permissions...")
-        raise app_commands.MissingPermissions(missing)
-    return app_commands.check(predicate)
-
-
-# ====================== SHARED CONTENT ======================
-EIGHTBALL_RESPONSES = ["Absolutely yes.", "Signs point to yes.", "Try again later.", "Don't count on it.", "Don't do it!"]
-
-SLAP_ITEMS = ["a giant wet trout", "a broken keyboard", "a stale baguette", "a comically large rubber duck"]
-
-ROASTS = [
-    "is the type of person who pushes a door that clearly says 'Pull'.",
-    "looks like a person who claps when the airplane lands.",
-    "probably types with their two index fingers while looking at the keyboard.",
-    "has the emotional stability of an expired carton of milk.",
-    "is the human equivalent of a participation trophy.",
-]
-
-GENERAL_QUESTIONS = [
-    "If you could have any superpower but it only worked on Tuesdays, what would it be?",
-    "Would you rather fight 100 duck-sized horses or 1 horse-sized duck?",
-    "What's the weirdest thing you've ever eaten on purpose?",
-]
-
-TOPIC_QUESTIONS = {
-    "food": ["What's a food combination that sounds disgusting but is actually fire?"],
-    "gaming": ["What's the most rage-inducing game you've ever played?"],
-    "life": ["What's a piece of advice that actually made your life worse?"],
+SHOP = {
+    "padlock": {"name": "Padlock", "emoji": "🔒", "price": 500,
+                "desc": "Automatically blocks the next steal attempt against you."},
+    "lockpick": {"name": "Lockpick", "emoji": "🗝️", "price": 750,
+                 "desc": "Used automatically on your next steal: success chance 40% -> 65%."},
+    "xp_boost": {"name": "XP Boost", "emoji": "⚡", "price": 1500,
+                 "desc": "Use it for 2x chat XP for one hour."},
+    "mystery_box": {"name": "Mystery Box", "emoji": "🎁", "price": 400,
+                    "desc": "Use it to win between 100 and 2,500 coins."},
 }
 
+JOBS = [
+    "You delivered pizzas on a scooter with questionable brakes and earned **{amount}** coins.",
+    "You debugged a stranger's code and they paid you **{amount}** coins.",
+    "You walked a pack of very confused dogs and earned **{amount}** coins.",
+    "You streamed to 3 viewers (one was your mom) and got **{amount}** coins in donations.",
+    "You sold lemonade at an unreasonable markup and made **{amount}** coins.",
+    "You mowed a lawn that turned out to be a golf course. They still paid you **{amount}** coins.",
+    "You won a hot-dog eating contest and pocketed **{amount}** coins.",
+]
 
-def rate_comment(score: int) -> str:
-    if score <= 3:
-        return random.choice(["Absolutely tragic. Delete this.", "This is so bad it almost crashed my servers."])
-    if score <= 7:
-        return random.choice(["It's oki.", "Decent effort."])
-    return random.choice(["Magnificent! I'm impressed.", "Amazing"])
+FALLBACK_TRIVIA = [
+    {"q": "What is the capital of Denmark?", "a": "Copenhagen", "w": ["Aarhus", "Odense", "Aalborg"], "d": "easy", "c": "Geography"},
+    {"q": "How many players are on the field for one soccer team?", "a": "11", "w": ["9", "10", "12"], "d": "easy", "c": "Sports"},
+    {"q": "What planet is known as the Red Planet?", "a": "Mars", "w": ["Venus", "Jupiter", "Mercury"], "d": "easy", "c": "Science"},
+    {"q": "In computing, what does 'HTTP' stand for?", "a": "HyperText Transfer Protocol",
+     "w": ["High Transfer Text Protocol", "HyperText Transmission Process", "Host Transfer Terminal Protocol"], "d": "medium", "c": "Computers"},
+    {"q": "Which element has the chemical symbol 'Au'?", "a": "Gold", "w": ["Silver", "Argon", "Aluminium"], "d": "medium", "c": "Science"},
+]
+
+# ====================== DATABASE ======================
+db = sqlite3.connect(DB_PATH)
+db.row_factory = sqlite3.Row
+db.executescript("""
+CREATE TABLE IF NOT EXISTS users (
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    coins INTEGER NOT NULL DEFAULT 0,
+    bank INTEGER NOT NULL DEFAULT 0,
+    xp INTEGER NOT NULL DEFAULT 0,
+    last_daily REAL NOT NULL DEFAULT 0,
+    daily_streak INTEGER NOT NULL DEFAULT 0,
+    last_work REAL NOT NULL DEFAULT 0,
+    last_steal REAL NOT NULL DEFAULT 0,
+    last_msg REAL NOT NULL DEFAULT 0,
+    boost_until REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS inventory (
+    guild_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    item TEXT NOT NULL,
+    qty INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (guild_id, user_id, item)
+);
+CREATE TABLE IF NOT EXISTS level_roles (
+    guild_id INTEGER NOT NULL,
+    level INTEGER NOT NULL,
+    role_id INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, level)
+);
+""")
+db.commit()
+
+_SETTABLE = {"last_daily", "daily_streak", "last_work", "last_steal", "last_msg", "boost_until"}
 
 
-def rate_text(thing: str) -> str:
-    score = random.randint(0, 10)
-    return (f"**Judgement Time!**\n**Thing:** {thing}\n**Rating:** `{score}/10`\n"
-            f"*\"{rate_comment(score)}\"*")
+def get_user(guild_id: int, user_id: int) -> sqlite3.Row:
+    db.execute("INSERT OR IGNORE INTO users (guild_id, user_id) VALUES (?, ?)", (guild_id, user_id))
+    return db.execute("SELECT * FROM users WHERE guild_id=? AND user_id=?", (guild_id, user_id)).fetchone()
 
 
-def pick_question(topic: Optional[str]) -> str:
-    if topic and topic.lower() in TOPIC_QUESTIONS:
-        return random.choice(TOPIC_QUESTIONS[topic.lower()])
-    return random.choice(GENERAL_QUESTIONS)
+def add_coins(guild_id: int, user_id: int, amount: int) -> None:
+    get_user(guild_id, user_id)
+    db.execute("UPDATE users SET coins = MAX(0, coins + ?) WHERE guild_id=? AND user_id=?",
+               (amount, guild_id, user_id))
+    db.commit()
 
 
-def build_qna_embed(topic: Optional[str]) -> discord.Embed:
-    embed = discord.Embed(title="Random Silly Question", description=pick_question(topic),
-                          color=discord.Color.random())
-    if topic:
-        embed.set_footer(text=f"Topic: {topic}")
-    return embed
+def take_coins(guild_id: int, user_id: int, amount: int) -> bool:
+    """Atomically removes coins. Returns False if the wallet can't cover it."""
+    if amount <= 0:
+        return False
+    get_user(guild_id, user_id)
+    cur = db.execute("UPDATE users SET coins = coins - ? WHERE guild_id=? AND user_id=? AND coins >= ?",
+                     (amount, guild_id, user_id, amount))
+    db.commit()
+    return cur.rowcount == 1
 
 
-def build_avatar_embed(target: discord.Member) -> discord.Embed:
-    embed = discord.Embed(
-        title=f"Avatar of {target.display_name}",
-        color=target.color if target.color.value else discord.Color.blue()
-    )
-    if target.avatar:
-        embed.set_image(url=target.avatar.url)
-        embed.description = f"[Open original image]({target.avatar.url})"
+def set_field(guild_id: int, user_id: int, **fields) -> None:
+    get_user(guild_id, user_id)
+    cols = [c for c in fields if c in _SETTABLE]
+    if not cols:
+        return
+    sql = "UPDATE users SET " + ", ".join(f"{c}=?" for c in cols) + " WHERE guild_id=? AND user_id=?"
+    db.execute(sql, [fields[c] for c in cols] + [guild_id, user_id])
+    db.commit()
+
+
+def inv_qty(guild_id: int, user_id: int, item: str) -> int:
+    row = db.execute("SELECT qty FROM inventory WHERE guild_id=? AND user_id=? AND item=?",
+                     (guild_id, user_id, item)).fetchone()
+    return row["qty"] if row else 0
+
+
+def inv_add(guild_id: int, user_id: int, item: str, qty: int = 1) -> None:
+    db.execute(
+        "INSERT INTO inventory (guild_id, user_id, item, qty) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(guild_id, user_id, item) DO UPDATE SET qty = qty + excluded.qty",
+        (guild_id, user_id, item, qty))
+    db.commit()
+
+
+def inv_take(guild_id: int, user_id: int, item: str, qty: int = 1) -> bool:
+    cur = db.execute(
+        "UPDATE inventory SET qty = qty - ? WHERE guild_id=? AND user_id=? AND item=? AND qty >= ?",
+        (qty, guild_id, user_id, item, qty))
+    ok = cur.rowcount == 1
+    if ok:
+        db.execute("DELETE FROM inventory WHERE guild_id=? AND user_id=? AND item=? AND qty <= 0",
+                   (guild_id, user_id, item))
+    db.commit()
+    return ok
+
+
+def move_money(guild_id: int, user_id: int, amount: int, to_bank: bool) -> bool:
+    get_user(guild_id, user_id)
+    if to_bank:
+        sql = "UPDATE users SET coins=coins-?, bank=bank+? WHERE guild_id=? AND user_id=? AND coins>=?"
     else:
-        embed.set_image(url=target.default_avatar.url)
-        embed.description = "This user is using the default Discord avatar. (error code 5)"
-    return embed
-
-
-def build_whois_embed(target: discord.Member, requester: discord.Member) -> discord.Embed:
-    account_created = target.created_at.strftime("%d %b %Y")
-    server_joined = target.joined_at.strftime("%d %b %Y") if target.joined_at else "Unknown"
-
-    roles = [role.mention for role in target.roles if role.name != "@everyone"]
-    roles_display = " ".join(roles[:15]) if roles else "No special roles"
-    if len(roles) > 15:
-        roles_display += f" (+{len(roles) - 15} more)"
-
-    status_tags = []
-    if target.guild_permissions.administrator:
-        status_tags.append("Administrator")
-    elif target.guild_permissions.manage_guild:
-        status_tags.append("Server Manager")
-    elif target.guild_permissions.kick_members or target.guild_permissions.ban_members:
-        status_tags.append("Moderator")
-    if target.bot:
-        status_tags.append("Bot Account")
-    status_display = ", ".join(status_tags) if status_tags else "Regular Member"
-
-    embed = discord.Embed(
-        title=f"User Info - {target}",
-        color=target.color if target.color.value else discord.Color.blue()
-    )
-    embed.set_thumbnail(url=target.display_avatar.url)
-    embed.add_field(name="Display Name", value=target.mention, inline=True)
-    embed.add_field(name="Account ID", value=f"{target.id}", inline=True)
-    embed.add_field(name="Status", value=status_display, inline=True)
-    embed.add_field(name="Created On", value=account_created, inline=True)
-    embed.add_field(name="Joined Server", value=server_joined, inline=True)
-    embed.add_field(name=f"Roles ({len(roles)})", value=roles_display, inline=False)
-    embed.set_footer(text=f"Requested by {requester.display_name}")
-    return embed
-
-
-# ====================== PREFIX PARSING HELPERS ======================
-def _token_id(token: str, chars: str) -> Optional[int]:
-    digits = token.strip(chars)
-    return int(digits) if digits.isdigit() else None
-
-
-def resolve_member(message: discord.Message, args: list):
-    """Reads a member (@mention or ID) from the first argument. Returns (member, remaining_args)."""
-    if not args:
-        return None, []
-    member_id = _token_id(args[0], "<@!>")
-    member = message.guild.get_member(member_id) if member_id else None
-    return member, args[1:]
-
-
-def resolve_role(message: discord.Message, token: str) -> Optional[discord.Role]:
-    role_id = _token_id(token, "<@&>")
-    return message.guild.get_role(role_id) if role_id else None
-
-
-def resolve_channel(message: discord.Message, token: str) -> Optional[discord.abc.GuildChannel]:
-    channel_id = _token_id(token, "<#>")
-    return message.guild.get_channel(channel_id) if channel_id else None
-
-
-PREFIX_HELP = (
-    "**📖 `!v` commands**\n"
-    "**Fun:** `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, `slap @member`, "
-    "`roast @member`, `qna [food|gaming|life]`\n"
-    "**Info:** `avatar [@member]`, `whois [@member]`\n"
-    "**Moderation:** `kick @member [reason]`, `ban @member [reason]`, "
-    "`timeout @member <minutes> [reason]`, `removetimeout @member`, "
-    "`addrole @member @role`, `removerole @member @role`\n"
-    "**Admin:** `setstatus <text>`, `say <text>`, `createcategory <name>`, "
-    "`createchannel <name> [category_id]`, `createvoice <name> [category_id]`, "
-    "`movechannel <#channel or id> <up|down>`\n"
-    "Music uses slash commands (`/play`, `/queue`, ...)."
-)
-
-
-async def handle_prefix_command(message: discord.Message, command: str, args: list) -> None:
-    """Every `!v <command>` lands here."""
-    guild = message.guild
-    author = message.author
-    send = message.channel.send
-
-    # determine developer flag locally
-    is_dev = author.id in TRUSTED_DEV_IDS
-
-    # Economy / leveling / games / fun commands live in fun.py
-    if await fun.handle_prefix(message, command, args, privileged=message_is_authorized(message)):
-        return
-
-    async def deny_admin():
-        await send("❌ **Access Denied:** Missing privileges.")
-
-    async def deny_perm(label: str):
-        await send(f"❌ **Access Denied:** You need the `{label}` permission.")
-
-    # --- HELP ---
-    if command == "help":
-        await send(PREFIX_HELP)
-        await send(fun.PREFIX_HELP)
-        return
-
-    # --- SET STATUS ---
-    if command == "setstatus":
-        if not message_is_authorized(message):
-            return await deny_admin()
-        if not args:
-            return await send("❌ **Usage:** `!v setstatus <text>`")
-        status_text = " ".join(args)
-        await bot.change_presence(activity=discord.Game(name=status_text))
-        return await send(f"✅ Status updated to: **Playing {status_text}**")
-
-    # --- PING (LATENCY PERFORMANCE) ---
-    if command == "ping":
-        start_time = time.time()
-        # Send an initial message to calculate round-trip processing time
-        msg = await message.channel.send("Calculating performance spikes...")
-        end_time = time.time()
-
-        # API gateway WebSocket latency
-        gateway_ping = round(bot.latency * 1000)
-        # Full chat routing process speed
-        message_ping = round((end_time - start_time) * 1000)
-
-        await msg.edit(content=(
-            f"**Pong!**\n"
-            f"**API Gateway Latency:** `{gateway_ping}ms`\n"
-            f"**Message Processing Speed:** `{message_ping}ms`"
-        ))
-        return
-
-    # --- CLEAN CACHE (DEVELOPER ONLY) ---
-    if command == "cleancache":
-        if not is_dev:
-            await message.channel.send("**Access Denied:** Not a dev.")
-            return
-
-        status_msg = await message.channel.send("*Initializing memory array cache purging...*")
-
-        try:
-            # 1. Clear internal discord.py user/member message caches safely
-            try:
-                bot._connection._messages.clear()
-            except Exception:
-                # Accessing private internals may fail on some discord.py versions; ignore safely
-                pass
-
-            # 2. Force Python's core garbage collector to dump unlinked memory states immediately
-            import gc
-            gc.collect()
-
-            await status_msg.edit(content="✅ **Cache Clean Complete!**")
-        except Exception as e:
-            await status_msg.edit(content=f"❌ **Purge Failed:** Internal fault tracking error: `{e}`")
-        return
-
-
-    # --- SAY ---
-    if command == "say":
-        if not message_is_authorized(message):
-            return await deny_admin()
-        if not args:
-            return await send("❌ **Usage:** `!v say <text>`")
-        return await send(" ".join(args))
-
-    # --- COINFLIP ---
-    if command == "coinflip":
-        if random.choice(["Heads", "Tails"]) == "Heads":
-            return await send("🪙 **Heads!** You lucked out. You survive... for now.")
-        try:
-            await author.timeout(timedelta(seconds=60), reason="Lost prefix coinflip")
-            return await send("🪙 **Tails!** Enjoy your **1-minute timeout**! :D")
-        except discord.Forbidden:
-            return await send("🪙 **Tails!** You should be timed out, but your permissions protected you.")
-
-    # (`steal` now lives in fun.py with real coins)
-
-    # --- RATE ---
-    if command == "rate":
-        if not args:
-            return await send("❌ **Usage:** `!v rate <thing>`")
-        return await send(rate_text(" ".join(args)))
-
-    # --- 8BALL ---
-    if command == "8ball":
-        if not args:
-            return await send("❌ **Usage:** `!v 8ball <question>`")
-        return await send(
-            f"**The Magic 8-Ball**\n**Question:** {' '.join(args)}\n**Answer:** {random.choice(EIGHTBALL_RESPONSES)}")
-
-    # --- SLAP ---
-    if command == "slap":
-        target, _ = resolve_member(message, args)
-        if target is None:
-            return await send("❌ **Usage:** `!v slap @member`")
-        if target == author:
-            return await send(f"{author.mention} tried to slap themselves but missed.")
-        return await send(f"WHACK! {author.mention} slaps {target.mention} with {random.choice(SLAP_ITEMS)}!")
-
-    # --- ROAST ---
-    if command == "roast":
-        target, _ = resolve_member(message, args)
-        if target is None:
-            return await send("❌ **Usage:** `!v roast @member`")
-        if target == author:
-            return await send(f"{author.mention}, roasting error: check code e12.")
-        if target == bot.user:
-            return await send("You can't roast bots.. Not on discord.. (error code 9)")
-        return await send(f"{target.mention}, {random.choice(ROASTS)}")
-
-    # --- AVATAR ---
-    if command == "avatar":
-        target, _ = resolve_member(message, args)
-        return await send(embed=build_avatar_embed(target or author))
-
-    # --- WHOIS ---
-    if command == "whois":
-        target, _ = resolve_member(message, args)
-        return await send(embed=build_whois_embed(target or author, author))
-
-    # --- QNA ---
-    if command == "qna":
-        topic = args[0] if args else None
-        return await send(embed=build_qna_embed(topic))
-
-    # ---------------- MODERATION ----------------
-    # --- KICK ---
-    if command == "kick":
-        if not has_mod_perms(message, "kick_members"):
-            return await deny_perm("Kick Members")
-        member, rest = resolve_member(message, args)
-        if member is None:
-            return await send("❌ **Usage:** `!v kick @member [reason]`")
-        error = hierarchy_error(author, member, guild, "kick")
-        if error:
-            return await send(error)
-        reason = " ".join(rest) or "No reason provided"
-        try:
-            await member.kick(reason=f"{author} | {reason}")
-            return await send(f"{member} has been kicked.\nReason: {reason}")
-        except discord.Forbidden:
-            return await send("I don't have permission to kick this member. (error code e13)")
-
-    # --- BAN ---
-    if command == "ban":
-        if not has_mod_perms(message, "ban_members"):
-            return await deny_perm("Ban Members")
-        member, rest = resolve_member(message, args)
-        if member is None:
-            return await send("❌ **Usage:** `!v ban @member [reason]`")
-        error = hierarchy_error(author, member, guild, "ban")
-        if error:
-            return await send(error)
-        reason = " ".join(rest) or "No reason provided"
-        try:
-            await member.ban(reason=f"{author} | {reason}")
-            return await send(f"{member} has been banned.\nReason: {reason}")
-        except discord.Forbidden:
-            return await send("I don't have permission to ban this member.")
-
-    # --- TIMEOUT ---
-    if command == "timeout":
-        if not has_mod_perms(message, "moderate_members"):
-            return await deny_perm("Moderate Members")
-        member, rest = resolve_member(message, args)
-        if member is None or not rest or not rest[0].isdigit():
-            return await send("❌ **Usage:** `!v timeout @member <minutes> [reason]`")
-        minutes = int(rest[0])
-        if not 1 <= minutes <= 40320:
-            return await send("❌ Minutes must be between 1 and 40320.")
-        error = hierarchy_error(author, member, guild, "timeout")
-        if error:
-            return await send(error)
-        reason = " ".join(rest[1:]) or "No reason provided"
-        try:
-            await member.timeout(timedelta(minutes=minutes), reason=f"{author} | {reason}")
-            return await send(f"{member} has been timed out for {minutes} minutes.\nReason: {reason}")
-        except discord.Forbidden:
-            return await send("I don't have permission to timeout this member.")
-
-    # --- REMOVE TIMEOUT ---
-    if command == "removetimeout":
-        if not has_mod_perms(message, "moderate_members"):
-            return await deny_perm("Moderate Members")
-        member, _ = resolve_member(message, args)
-        if member is None:
-            return await send("❌ **Usage:** `!v removetimeout @member`")
-        try:
-            await member.timeout(None)
-            return await send(f"Timeout removed from {member}.")
-        except discord.Forbidden:
-            return await send("I don't have permission to remove the timeout.")
-
-    # --- ADD ROLE / REMOVE ROLE ---
-    if command in ("addrole", "removerole"):
-        if not has_mod_perms(message, "manage_roles"):
-            return await deny_perm("Manage Roles")
-        member, rest = resolve_member(message, args)
-        role = resolve_role(message, rest[0]) if rest else None
-        if member is None or role is None:
-            return await send(f"❌ **Usage:** `!v {command} @member @role`")
-        if role >= guild.me.top_role:
-            return await send("That role is higher than my highest role.")
-        adding = command == "addrole"
-        if role >= author.top_role and not is_privileged_user(author, guild):
-            word = "give" if adding else "remove"
-            return await send(f"You can't {word} a role equal to or higher than your own.")
-        try:
-            if adding:
-                if role in member.roles:
-                    return await send(f"{member} already has the {role.name} role.")
-                await member.add_roles(role, reason=f"Given by {author}")
-                return await send(f"Gave {role.name} to {member}.")
-            if role not in member.roles:
-                return await send(f"{member} doesn't have the {role.name} role.")
-            await member.remove_roles(role, reason=f"Removed by {author}")
-            return await send(f"Removed {role.name} from {member}.")
-        except discord.Forbidden:
-            return await send("I don't have permission to manage that role.")
-
-    # ---------------- CHANNEL UTILITIES ----------------
-    # --- CREATE CATEGORY ---
-    if command == "createcategory":
-        if not message_is_authorized(message):
-            return await deny_admin()
-        if not args:
-            return await send("❌ **Usage:** `!v createcategory <name>`")
-        try:
-            category = await guild.create_category(name=" ".join(args))
-            return await send(f"📁 Successfully created category: **{category.name}**")
-        except discord.Forbidden:
-            return await send("❌ Error: I do not have permission to manage channels.")
-        except Exception as e:
-            return await send(f"❌ Failed to create category: `{e}`")
-
-    # --- CREATE CHANNEL / CREATE VOICE ---
-    if command in ("createchannel", "createvoice"):
-        if not message_is_authorized(message):
-            return await deny_admin()
-        if not args:
-            return await send(f"❌ **Usage:** `!v {command} <name> [category_id]`")
-
-        # An optional trailing number is treated as the category ID
-        category = None
-        name_parts = list(args)
-        if len(name_parts) > 1 and name_parts[-1].isdigit():
-            maybe_category = guild.get_channel(int(name_parts[-1]))
-            if isinstance(maybe_category, discord.CategoryChannel):
-                category = maybe_category
-                name_parts = name_parts[:-1]
-        name = " ".join(name_parts)
-
-        try:
-            location_text = f" inside **{category.name}**" if category else ""
-            if command == "createchannel":
-                channel = await guild.create_text_channel(name=name.lower().replace(" ", "-"), category=category)
-                return await send(f"💬 Successfully created text channel: {channel.mention}{location_text}")
-            voice_channel = await guild.create_voice_channel(name=name, category=category)
-            return await send(f"🔊 Successfully created voice channel: **{voice_channel.name}**{location_text}")
-        except discord.Forbidden:
-            return await send("❌ Error: I do not have permission to manage channels.")
-        except Exception as e:
-            return await send(f"❌ Failed to create channel: `{e}`")
-
-    # --- MOVE CHANNEL ---
-    if command == "movechannel":
-        if not message_is_authorized(message):
-            return await deny_admin()
-        target = resolve_channel(message, args[0]) if args else None
-        direction = args[1].lower() if len(args) > 1 else ""
-        if target is None or direction not in ("up", "down"):
-            return await send("❌ **Usage:** `!v movechannel <#channel or channel/category ID> <up|down>`")
-        try:
-            change = -1 if direction == "up" else 1
-            await target.edit(position=max(0, target.position + change))
-            return await send(f"✅ Successfully moved **{target.name}** {direction}!")
-        except discord.Forbidden:
-            return await send("❌ Error: I don't have permission to manage this channel. "
-                              "Make sure my bot role is high enough in the server settings!")
-        except Exception as e:
-            return await send(f"❌ Failed to move channel: `{e}`")
-
-    # Unknown command: stay quiet so normal chat starting with "!v " isn't spammed
-
-
-# ====================== INACTIVITY TRACKING TASK ======================
-@tasks.loop(minutes=1)
-async def check_inactivity_timers():
-    """Loops every 60 seconds to monitor server playback inactivity."""
-    for guild_id, info in list(inactive_config.items()):
-        guild = bot.get_guild(guild_id)
-        if not guild:
-            continue
-
-        vc = guild.voice_client
-        player = music.players.get(guild_id) if hasattr(music, "players") else None
-
-        is_user_active = False
-
-        if vc and vc.channel:
-            active_listeners = [m for m in vc.channel.members if not m.bot]
-            if (vc.is_playing() or vc.is_paused()) and len(active_listeners) > 0:
-                is_user_active = True
-
-        if player and (player.current or player.queue):
-            if getattr(player, "auto_paused", False):
-                is_user_active = False
-            elif player.current:
-                is_user_active = True
-
-        if is_user_active:
-            info["idle_since"] = None
-        else:
-            if info["idle_since"] is None:
-                info["idle_since"] = time.time()
-            elif time.time() - info["idle_since"] >= 300:
-                target_channel = guild.get_channel(info["channel_id"])
-                if target_channel and (vc is None or vc.channel != target_channel):
-                    try:
-                        if vc is None:
-                            await target_channel.connect()
-                        else:
-                            await vc.move_to(target_channel)
-                        print(f"💤 Uptime Connection: Auto-joined idle channel in server {guild.name}")
-                    except Exception as e:
-                        print(f"Could not complete auto-join sequence: {e}")
-                    info["idle_since"] = None
-
-
-# ====================== EVENTS ======================
-@bot.event
-async def on_ready():
-    global synced_once
-    print(f"Logged in as {bot.user} ({bot.user.id})")
-    print("Registered slash commands:", sorted(c.name for c in tree.get_commands()))
-
-    if not check_inactivity_timers.is_running():
-        check_inactivity_timers.start()
-        print("⏰ Background inactivity tracking routine initialized.")
-
-    if not synced_once:
-        synced_once = True
-        try:
-            print("🔄 Syncing slash commands globally...")
-            synced = await tree.sync()
-            print(f"✅ Success! Synced {len(synced)} commands globally.")
-        except Exception:
-            traceback.print_exc()
-
-
-@bot.event
-async def on_message(message: discord.Message):
-    if message.author.bot or message.guild is None:
-        return
-
-    # Chat XP / leveling (never lets a leveling error break normal commands)
+        sql = "UPDATE users SET bank=bank-?, coins=coins+? WHERE guild_id=? AND user_id=? AND bank>=?"
+    cur = db.execute(sql, (amount, amount, guild_id, user_id, amount))
+    db.commit()
+    return cur.rowcount == 1
+
+
+# ====================== SMALL HELPERS ======================
+def xp_needed(level: int) -> int:
+    """XP required to go from `level` to `level + 1`."""
+    return 5 * level ** 2 + 50 * level + 100
+
+
+def level_from_xp(total_xp: int):
+    """Returns (level, xp_into_current_level)."""
+    level = 0
+    while total_xp >= xp_needed(level):
+        total_xp -= xp_needed(level)
+        level += 1
+    return level, total_xp
+
+
+def fmt_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    parts = []
+    if h:
+        parts.append(f"{h}h")
+    if m:
+        parts.append(f"{m}m")
+    if s or not parts:
+        parts.append(f"{s}s")
+    return " ".join(parts)
+
+
+def parse_amount(text: str, available: int) -> Optional[int]:
+    t = text.strip().lower().replace(",", "")
+    if t in ("all", "max"):
+        return available if available > 0 else None
+    if t == "half":
+        return (available // 2) or None
+    n = int(t) if t.isdigit() else 0
+    return n if n > 0 else None
+
+
+def progress_bar(current: int, total: int, width: int = 12) -> str:
+    filled = int(width * current / total) if total else 0
+    return "█" * filled + "░" * (width - filled)
+
+
+async def fetch_json(url: str, **params):
     try:
-        await fun.on_message(message)
-    except Exception:
-        traceback.print_exc()
+        timeout = aiohttp.ClientTimeout(total=8)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, params=params or None) as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.json(content_type=None)
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return None
 
-    is_dev = message.author.id in TRUSTED_DEV_IDS
-    is_owner = message.author.id == message.guild.owner_id
-    content_lower = message.content.lower()
 
-    # !setup: owner/dev initializes the bot and refreshes slash commands
-    if content_lower == "!setup":
-        if not (is_dev or is_owner):
-            await message.channel.send(
-                "❌ **Access Denied:** Only the Server Owner or an authorized developer can initialize the bot.")
-            return
+async def reply_error(interaction: discord.Interaction, text: str) -> None:
+    await interaction.response.send_message(text, ephemeral=True)
 
-        status = await message.channel.send("⚙️ *Initializing configuration and syncing slash commands globally...*")
+
+# ====================== XP FROM CHATTING ======================
+async def apply_level_roles(member: discord.Member, level: int) -> None:
+    rows = db.execute("SELECT role_id FROM level_roles WHERE guild_id=? AND level<=?",
+                      (member.guild.id, level)).fetchall()
+    to_add = []
+    for row in rows:
+        role = member.guild.get_role(row["role_id"])
+        if role and role not in member.roles and role < member.guild.me.top_role:
+            to_add.append(role)
+    if to_add:
         try:
-            synced = await tree.sync()
-            embed = discord.Embed(
-                title="✅ Setup Successfully Completed!",
-                description=(
-                    f"Thank you for activating me on **{message.guild.name}**!\n\n"
-                    f"📦 **{len(synced)} Slash Commands Registered!**\n"
-                    "Type `/` to see slash commands, or use `!v help` for prefix commands."
-                ),
-                color=discord.Color.green()
-            )
-            await status.delete()
-            await message.channel.send(embed=embed)
-        except Exception as e:
-            await status.edit(content=f"❌ **Setup Failed:** `{e}`")
-        return
-
-    # !forcesync: owner/dev manually refreshes slash commands
-    if content_lower == "!forcesync":
-        if not (is_dev or is_owner):
-            await message.channel.send(
-                "❌ **Access Denied:** Only the Server Owner or an authorized developer can force an update.")
-            return
-
-        status = await message.channel.send("🔄 *Manually broadcasting and refreshing command layout strings globally...*")
-        try:
-            synced = await tree.sync()
-            await status.edit(
-                content=f"**Force-Sync Complete!** `{len(synced)}` global app slash commands refreshed everywhere.")
-        except Exception as e:
-            await status.edit(content=f"❌ **Force-Sync Failed:** `{e}`")
-        return
-
-    # !serverlist: developers only
-    if content_lower == "!serverlist":
-        if not is_dev:
-            await message.channel.send("❌ **Access Denied:** Developer eyes only.")
-            return
-
-        sorted_guilds = sorted(bot.guilds, key=lambda g: g.member_count or 0, reverse=True)
-        report = "**Bot Server Presence List (Largest to Smallest):**\n\n"
-        for index, guild in enumerate(sorted_guilds, start=1):
-            report += f"`{index}.` **{guild.name}** | ID: `{guild.id}` | 👥 Members: `{guild.member_count}`\n"
-            if len(report) > 1800:
-                report += "...and more servers."
-                break
-
-        await message.channel.send(report)
-        return
-
-    # !inactive <voice_channel_id>: 5-minute automated inactivity fallback channel
-    if content_lower.startswith("!inactive"):
-        if not (is_dev or is_owner):
-            await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
-            return
-
-        parts = message.content.split()
-        if len(parts) < 2:
-            await message.channel.send("❌ **Usage:** `!inactive <voice_channel_id>`")
-            return
-
-        try:
-            channel_id = int(parts[1])
-            vc_channel = bot.get_channel(channel_id) or await bot.fetch_channel(channel_id)
-
-            if not isinstance(vc_channel, discord.VoiceChannel):
-                await message.channel.send(
-                    "❌ **Error:** That ID belongs to a text or category channel. "
-                    "Please supply a valid Voice Channel ID.")
-                return
-
-            inactive_config[message.guild.id] = {"channel_id": vc_channel.id, "idle_since": None}
-            await message.channel.send(
-                f"**Inactive Channel activated**, I will automatically join **{vc_channel.name}**.")
-
-        except ValueError:
-            await message.channel.send("❌ **Error:** The voice channel ID must be a valid number.")
-        except discord.NotFound:
-            await message.channel.send("❌ **Error:** Could not locate that voice channel ID. Is it hidden from me?")
-        except Exception as e:
-            await message.channel.send(f"❌ **Failed to map channel:** `{e}`")
-        return
-
-    # ============================================================
-    # THE !V PREFIX COMMANDS
-    # ============================================================
-    if content_lower.startswith("!v "):
-        parts = message.content.split()
-        if len(parts) >= 2:
-            try:
-                await handle_prefix_command(message, parts[1].lower(), parts[2:])
-            except Exception as e:
-                traceback.print_exc()
-                try:
-                    await message.channel.send(f"Something went wrong: `{str(e)[:300]}`")
-                except discord.HTTPException:
-                    pass
-        return
-
-    # Reply ONLY when the bot is explicitly @mentioned
-    if bot.user in message.mentions and not message.mention_everyone:
-        if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
-            try:
-                await message.reply("Hi")
-            except discord.HTTPException:
-                pass
-            return
-
-    # React to the word "vlg"
-    if "vlg" in content_lower:
-        try:
-            emoji = bot.get_emoji(1559616784200499291)
-            await message.add_reaction(emoji if emoji else "")
+            await member.add_roles(*to_add, reason="Level reward")
         except discord.HTTPException:
             pass
 
 
-# ====================== ADVANCED LOGGING MODULE ======================
-@bot.event
-async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
-    """Logs unusual activity like text, voice, or category channels being deleted."""
-    log_channel = discord.utils.get(channel.guild.text_channels, name="bot-logs")
-    if not log_channel:
+async def on_message(message: discord.Message) -> None:
+    """Call this from your bot's on_message to award chat XP."""
+    if message.author.bot or message.guild is None:
         return
 
-    # Don't log if the logging channel itself is being deleted
-    if channel.name == "bot-logs":
+    guild_id, user_id = message.guild.id, message.author.id
+    row = get_user(guild_id, user_id)
+    now = time.time()
+    if now - row["last_msg"] < XP_COOLDOWN:
         return
 
-    embed = discord.Embed(
-        title="Unusual Activity: Channel Deleted",
-        description=f"The channel/category **{channel.name}** (Type: `{channel.type}`) was deleted from the server.",
-        color=discord.Color.dark_red()
-    )
-    embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
+    gain = random.randint(15, 25)
+    if row["boost_until"] > now:
+        gain *= 2
 
-    try:
-        await log_channel.send(embed=embed)
-    except discord.HTTPException:
-        pass
+    old_level, _ = level_from_xp(row["xp"])
+    db.execute("UPDATE users SET xp = xp + ?, last_msg = ? WHERE guild_id=? AND user_id=?",
+               (gain, now, guild_id, user_id))
+    db.commit()
+    new_level, _ = level_from_xp(row["xp"] + gain)
+
+    if new_level > old_level:
+        reward = new_level * 50
+        add_coins(guild_id, user_id, reward)
+        try:
+            await message.channel.send(
+                f"🎉 {message.author.mention} reached **level {new_level}**! (+{reward:,} {COIN})")
+        except discord.HTTPException:
+            pass
+        if isinstance(message.author, discord.Member):
+            await apply_level_roles(message.author, new_level)
 
 
-# ====================== SLASH ERROR HANDLER ======================
-@tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.CommandOnCooldown):
-        msg = f"Slow down! Try again in **{error.retry_after:.1f}** seconds. (error code 4)"
-    elif isinstance(error, app_commands.MissingPermissions):
-        needed = ", ".join(p.replace("_", " ").title() for p in error.missing_permissions)
-        msg = f"**Access Denied!** You need these permissions: `{needed}`. (error code 6)"
-    elif isinstance(error, app_commands.CheckFailure):
-        if interaction.response.is_done():
-            return
-        msg = "You can't use this command."
-    else:
-        original = getattr(error, "original", error)
-        traceback.print_exception(type(original), original, original.__traceback__)
-        msg = f"Something went wrong: `{str(original)[:300]}`"
+# ====================== BLACKJACK ======================
+SUITS = ["♠", "♥", "♦", "♣"]
+RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 
-    try:
-        if interaction.response.is_done():
-            await interaction.followup.send(msg, ephemeral=True)
+
+def card_value(rank: str) -> int:
+    if rank == "A":
+        return 11
+    if rank in ("J", "Q", "K"):
+        return 10
+    return int(rank)
+
+
+def hand_value(hand) -> int:
+    total = sum(card_value(r) for r, _ in hand)
+    aces = sum(1 for r, _ in hand if r == "A")
+    while total > 21 and aces:
+        total -= 10
+        aces -= 1
+    return total
+
+
+def fmt_hand(hand) -> str:
+    return " ".join(f"`{r}{s}`" for r, s in hand)
+
+
+BJ_RESULTS = {
+    "blackjack": ("Blackjack! 🎉", discord.Color.gold()),
+    "win": ("You win!", discord.Color.green()),
+    "push": ("Push - your bet is returned.", discord.Color.light_grey()),
+    "lose": ("Dealer wins.", discord.Color.red()),
+    "bust": ("Bust!", discord.Color.red()),
+    "timeout": ("Timed out - bet forfeited.", discord.Color.dark_grey()),
+}
+
+
+class BlackjackView(discord.ui.View):
+    def __init__(self, user: discord.abc.User, guild_id: int, bet: int):
+        super().__init__(timeout=90)
+        self.user = user
+        self.guild_id = guild_id
+        self.bet = bet
+        self.deck = [(r, s) for r in RANKS for s in SUITS] * 2
+        random.shuffle(self.deck)
+        self.player = [self.deck.pop(), self.deck.pop()]
+        self.dealer = [self.deck.pop(), self.deck.pop()]
+        self.done = False
+        self.message: Optional[discord.Message] = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This isn't your game!", ephemeral=True)
+            return False
+        return True
+
+    def embed(self, reveal: bool = False, footer: Optional[str] = None,
+              color: Optional[discord.Color] = None) -> discord.Embed:
+        e = discord.Embed(title="🃏 Blackjack", color=color or discord.Color.blurple())
+        e.add_field(name=f"Your hand ({hand_value(self.player)})", value=fmt_hand(self.player), inline=False)
+        if reveal:
+            e.add_field(name=f"Dealer ({hand_value(self.dealer)})", value=fmt_hand(self.dealer), inline=False)
         else:
-            await interaction.response.send_message(msg, ephemeral=True)
-    except discord.HTTPException:
-        pass
+            r, s = self.dealer[0]
+            e.add_field(name="Dealer", value=f"`{r}{s}` `??`", inline=False)
+        e.set_footer(text=footer or f"Bet: {self.bet:,} coins")
+        return e
+
+    def finish(self, outcome: str) -> discord.Embed:
+        self.done = True
+        for child in self.children:
+            child.disabled = True
+        payout = {
+            "blackjack": int(self.bet * 2.5), "win": self.bet * 2, "push": self.bet,
+            "lose": 0, "bust": 0, "timeout": 0,
+        }[outcome]
+        if payout:
+            add_coins(self.guild_id, self.user.id, payout)
+        text, color = BJ_RESULTS[outcome]
+        return self.embed(reveal=True, footer=f"{text} ({payout - self.bet:+,} coins)", color=color)
+
+    def dealer_outcome(self) -> str:
+        player_total = hand_value(self.player)
+        while hand_value(self.dealer) < 17:
+            self.dealer.append(self.deck.pop())
+        dealer_total = hand_value(self.dealer)
+        if dealer_total > 21 or player_total > dealer_total:
+            return "win"
+        return "push" if player_total == dealer_total else "lose"
+
+    async def _stand(self, interaction: discord.Interaction) -> None:
+        await interaction.response.edit_message(embed=self.finish(self.dealer_outcome()), view=self)
+        self.stop()
+
+    @discord.ui.button(label="Hit", style=discord.ButtonStyle.green, emoji="➕")
+    async def hit(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.player.append(self.deck.pop())
+        total = hand_value(self.player)
+        if total > 21:
+            await interaction.response.edit_message(embed=self.finish("bust"), view=self)
+            self.stop()
+        elif total == 21:
+            await self._stand(interaction)
+        else:
+            await interaction.response.edit_message(embed=self.embed(), view=self)
+
+    @discord.ui.button(label="Stand", style=discord.ButtonStyle.blurple, emoji="✋")
+    async def stand(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._stand(interaction)
+
+    async def on_timeout(self) -> None:
+        if self.done or not self.message:
+            return
+        try:
+            await self.message.edit(embed=self.finish("timeout"), view=self)
+        except discord.HTTPException:
+            pass
+
+
+# ====================== ROCK PAPER SCISSORS ======================
+RPS_EMOJI = {"rock": "🪨", "paper": "📄", "scissors": "✂️"}
+RPS_BEATS = {"rock": "scissors", "paper": "rock", "scissors": "paper"}
+
+
+class RPSView(discord.ui.View):
+    def __init__(self, user: discord.abc.User, guild_id: int, bet: int):
+        super().__init__(timeout=30)
+        self.user = user
+        self.guild_id = guild_id
+        self.bet = bet
+        self.done = False
+        self.message: Optional[discord.Message] = None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user.id:
+            await interaction.response.send_message("This isn't your game!", ephemeral=True)
+            return False
+        return True
+
+    async def play(self, interaction: discord.Interaction, choice: str) -> None:
+        self.done = True
+        bot_choice = random.choice(list(RPS_BEATS))
+        line = f"You: {RPS_EMOJI[choice]} **{choice}**  vs  Me: {RPS_EMOJI[bot_choice]} **{bot_choice}**\n"
+        if choice == bot_choice:
+            result = "It's a tie!"
+            if self.bet:
+                add_coins(self.guild_id, self.user.id, self.bet)
+                result += " Bet returned."
+        elif RPS_BEATS[choice] == bot_choice:
+            result = "You win! 🎉"
+            if self.bet:
+                add_coins(self.guild_id, self.user.id, self.bet * 2)
+                result += f" (+{self.bet:,} {COIN})"
+        else:
+            result = "I win! 😎"
+            if self.bet:
+                result += f" (-{self.bet:,} {COIN})"
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(content=line + result, view=self)
+        self.stop()
+
+    @discord.ui.button(label="Rock", emoji="🪨", style=discord.ButtonStyle.secondary)
+    async def rock(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.play(interaction, "rock")
+
+    @discord.ui.button(label="Paper", emoji="📄", style=discord.ButtonStyle.secondary)
+    async def paper(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.play(interaction, "paper")
+
+    @discord.ui.button(label="Scissors", emoji="✂️", style=discord.ButtonStyle.secondary)
+    async def scissors(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.play(interaction, "scissors")
+
+    async def on_timeout(self) -> None:
+        if self.done:
+            return
+        if self.bet:
+            add_coins(self.guild_id, self.user.id, self.bet)  # never played, refund
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(content="⌛ You took too long. Bet refunded.", view=self)
+            except discord.HTTPException:
+                pass
+
+
+# ====================== TIC-TAC-TOE ======================
+class TTTButton(discord.ui.Button):
+    def __init__(self, x: int, y: int):
+        super().__init__(style=discord.ButtonStyle.secondary, label="\u200b", row=y)
+        self.x = x
+        self.y = y
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.handle(interaction, self)
+
+
+class TicTacToeView(discord.ui.View):
+    def __init__(self, p1: discord.Member, p2: discord.Member):
+        super().__init__(timeout=120)
+        self.p1, self.p2 = p1, p2
+        self.current = p1
+        self.board = [[None] * 3 for _ in range(3)]
+        self.message: Optional[discord.Message] = None
+        for y in range(3):
+            for x in range(3):
+                self.add_item(TTTButton(x, y))
+
+    def symbol(self, user: discord.abc.User) -> str:
+        return "X" if user.id == self.p1.id else "O"
+
+    def winner(self) -> Optional[str]:
+        b = self.board
+        lines = [*b, *[[b[r][c] for r in range(3)] for c in range(3)],
+                 [b[i][i] for i in range(3)], [b[i][2 - i] for i in range(3)]]
+        for line in lines:
+            if line[0] and line[0] == line[1] == line[2]:
+                return line[0]
+        return None
+
+    def end(self) -> None:
+        for child in self.children:
+            child.disabled = True
+        self.stop()
+
+    async def handle(self, interaction: discord.Interaction, button: TTTButton) -> None:
+        if interaction.user.id not in (self.p1.id, self.p2.id):
+            return await interaction.response.send_message("You're not in this game.", ephemeral=True)
+        if interaction.user.id != self.current.id:
+            return await interaction.response.send_message("It's not your turn!", ephemeral=True)
+
+        mark = self.symbol(interaction.user)
+        self.board[button.y][button.x] = mark
+        button.label = mark
+        button.style = discord.ButtonStyle.danger if mark == "X" else discord.ButtonStyle.success
+        button.disabled = True
+
+        if self.winner():
+            self.end()
+            content = f"🎉 {interaction.user.mention} wins!"
+        elif all(cell for row in self.board for cell in row):
+            self.end()
+            content = "🤝 It's a draw!"
+        else:
+            self.current = self.p2 if self.current.id == self.p1.id else self.p1
+            content = f"{self.current.mention}'s turn ({self.symbol(self.current)})"
+        await interaction.response.edit_message(content=content, view=self)
+
+    async def on_timeout(self) -> None:
+        for child in self.children:
+            child.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(content="⌛ Game timed out.", view=self)
+            except discord.HTTPException:
+                pass
+
+
+# ====================== TRIVIA ======================
+class TriviaButton(discord.ui.Button):
+    def __init__(self, answer: str):
+        super().__init__(label=answer[:80], style=discord.ButtonStyle.secondary)
+        self.answer = answer
+
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.pick(interaction, self)
+
+
+class TriviaView(discord.ui.View):
+    def __init__(self, guild_id: int, correct: str, answers: list, reward: int):
+        super().__init__(timeout=20)
+        self.guild_id = guild_id
+        self.correct = correct
+        self.reward = reward
+        self.guessed = set()
+        self.done = False
+        self.message: Optional[discord.Message] = None
+        for answer in answers:
+            self.add_item(TriviaButton(answer))
+
+    def reveal(self) -> None:
+        for child in self.children:
+            child.disabled = True
+            if getattr(child, "answer", None) == self.correct:
+                child.style = discord.ButtonStyle.success
+
+    async def pick(self, interaction: discord.Interaction, button: TriviaButton) -> None:
+        if interaction.user.id in self.guessed:
+            return await interaction.response.send_message("You already guessed!", ephemeral=True)
+        self.guessed.add(interaction.user.id)
+        if button.answer != self.correct:
+            return await interaction.response.send_message("❌ Nope, you're out for this round!", ephemeral=True)
+
+        self.done = True
+        add_coins(self.guild_id, interaction.user.id, self.reward)
+        self.reveal()
+        await interaction.response.edit_message(
+            content=f"✅ {interaction.user.mention} got it! The answer was **{self.correct}** "
+                    f"(+{self.reward:,} {COIN})",
+            view=self)
+        self.stop()
+
+    async def on_timeout(self) -> None:
+        if self.done:
+            return
+        self.reveal()
+        if self.message:
+            try:
+                await self.message.edit(content=f"⌛ Time's up! The answer was **{self.correct}**.", view=self)
+            except discord.HTTPException:
+                pass
 
 
 # ====================== SLASH COMMANDS ======================
+def setup(bot: discord.Client, tree: app_commands.CommandTree) -> None:
+    def slash(name: str, description: str):
+        def deco(fn):
+            fn = app_commands.guild_only()(fn)
+            cmd = tree.command(name=name, description=description)(fn)
+            _commands[name] = cmd  # lets the !v prefix handler reuse the same code
+            return cmd
+        return deco
 
-@tree.command(name="setstatus", description="Change the bot's playing status")
-@app_commands.describe(text="The text you want the bot to display")
-@is_authorized()
-async def setstatus(interaction: discord.Interaction, text: str):
-    await bot.change_presence(activity=discord.Game(name=text))
-    await interaction.response.send_message(
-        f"Status successfully updated to: **Playing {text}**",
-        ephemeral=True
-    )
+    def item_choices(only: Optional[list] = None):
+        return [app_commands.Choice(name=f"{v['emoji']} {v['name']}", value=k)
+                for k, v in SHOP.items() if only is None or k in only]
+
+    # ---------------- ECONOMY ----------------
+    @slash("balance", "Check your coins (or someone else's)")
+    @app_commands.describe(member="Whose balance to view (leave empty for yourself)")
+    async def balance(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+        target = member or interaction.user
+        row = get_user(interaction.guild.id, target.id)
+        level, _ = level_from_xp(row["xp"])
+        e = discord.Embed(title=f"{target.display_name}'s balance", color=discord.Color.gold())
+        e.set_thumbnail(url=target.display_avatar.url)
+        e.add_field(name="Wallet", value=f"{COIN} {row['coins']:,}")
+        e.add_field(name="Bank", value=f"🏦 {row['bank']:,}")
+        e.add_field(name="Net worth", value=f"💰 {row['coins'] + row['bank']:,}")
+        e.set_footer(text=f"Level {level}")
+        await interaction.response.send_message(embed=e)
+
+    @slash("daily", "Claim your daily coins (streaks give bonuses!)")
+    async def daily(interaction: discord.Interaction):
+        gid, uid = interaction.guild.id, interaction.user.id
+        row = get_user(gid, uid)
+        now = time.time()
+        elapsed = now - row["last_daily"]
+        if elapsed < DAILY_COOLDOWN:
+            return await reply_error(
+                interaction, f"⏳ You already claimed today. Come back in **{fmt_duration(DAILY_COOLDOWN - elapsed)}**.")
+        streak = row["daily_streak"] + 1 if elapsed < DAILY_COOLDOWN * 2 else 1
+        reward = 200 + min(streak, 30) * 25
+        add_coins(gid, uid, reward)
+        set_field(gid, uid, last_daily=now, daily_streak=streak)
+        await interaction.response.send_message(
+            f"📅 You claimed **{reward:,}** {COIN}! Streak: **{streak}** day(s) 🔥")
+
+    @slash("work", "Do a job for some coins (1 hour cooldown)")
+    async def work(interaction: discord.Interaction):
+        gid, uid = interaction.guild.id, interaction.user.id
+        row = get_user(gid, uid)
+        now = time.time()
+        elapsed = now - row["last_work"]
+        if elapsed < WORK_COOLDOWN:
+            return await reply_error(
+                interaction, f"⏳ You're tired. Work again in **{fmt_duration(WORK_COOLDOWN - elapsed)}**.")
+        amount = random.randint(50, 250)
+        add_coins(gid, uid, amount)
+        set_field(gid, uid, last_work=now)
+        await interaction.response.send_message(random.choice(JOBS).format(amount=f"{amount:,}") + f" {COIN}")
+
+    @slash("pay", "Give some of your coins to another member")
+    @app_commands.describe(member="Who gets the coins", amount="How many coins to send")
+    async def pay(interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1]):
+        if member.bot or member.id == interaction.user.id:
+            return await reply_error(interaction, "❌ Pick another (non-bot) member.")
+        gid = interaction.guild.id
+        if not take_coins(gid, interaction.user.id, amount):
+            return await reply_error(interaction, "❌ You don't have that many coins in your wallet.")
+        add_coins(gid, member.id, amount)
+        await interaction.response.send_message(f"💸 {interaction.user.mention} sent **{amount:,}** {COIN} to {member.mention}!")
+
+    @slash("deposit", "Move coins into your bank (safe from stealing)")
+    @app_commands.describe(amount="A number, 'half' or 'all'")
+    async def deposit(interaction: discord.Interaction, amount: str):
+        gid, uid = interaction.guild.id, interaction.user.id
+        n = parse_amount(amount, get_user(gid, uid)["coins"])
+        if n is None or not move_money(gid, uid, n, to_bank=True):
+            return await reply_error(interaction, "❌ Invalid amount or not enough coins in your wallet.")
+        await interaction.response.send_message(f"🏦 Deposited **{n:,}** {COIN}.")
+
+    @slash("withdraw", "Take coins out of your bank")
+    @app_commands.describe(amount="A number, 'half' or 'all'")
+    async def withdraw(interaction: discord.Interaction, amount: str):
+        gid, uid = interaction.guild.id, interaction.user.id
+        n = parse_amount(amount, get_user(gid, uid)["bank"])
+        if n is None or not move_money(gid, uid, n, to_bank=False):
+            return await reply_error(interaction, "❌ Invalid amount or not enough coins in your bank.")
+        await interaction.response.send_message(f"💵 Withdrew **{n:,}** {COIN}.")
+
+    @slash("steal", "Try to steal coins from someone's wallet (risky!)")
+    @app_commands.describe(target="The member you want to rob")
+    async def steal(interaction: discord.Interaction, target: discord.Member):
+        gid, thief = interaction.guild.id, interaction.user
+        if target.bot or target.id == thief.id:
+            return await reply_error(interaction, "❌ Pick another (non-bot) member.")
+
+        thief_row = get_user(gid, thief.id)
+        now = time.time()
+        elapsed = now - thief_row["last_steal"]
+        if elapsed < STEAL_COOLDOWN:
+            return await reply_error(
+                interaction, f"⏳ Lay low for **{fmt_duration(STEAL_COOLDOWN - elapsed)}** before your next heist.")
+        if thief_row["coins"] < 50:
+            return await reply_error(interaction, "❌ You need at least **50** coins in your wallet to cover the fine if you get caught.")
+        victim_row = get_user(gid, target.id)
+        if victim_row["coins"] < 100:
+            return await reply_error(interaction, f"❌ {target.display_name} has less than 100 coins in their wallet. Not worth it.")
+
+        set_field(gid, thief.id, last_steal=now)
+
+        if inv_take(gid, target.id, "padlock"):
+            return await interaction.response.send_message(
+                f"🔒 {thief.mention} tried to rob {target.mention}, but their **padlock** snapped shut. The padlock is now broken.")
+
+        chance = 0.65 if inv_take(gid, thief.id, "lockpick") else 0.40
+        if random.random() < chance:
+            victim_coins = get_user(gid, target.id)["coins"]
+            amount = max(1, int(victim_coins * random.uniform(0.10, 0.30)))
+            if take_coins(gid, target.id, amount):
+                add_coins(gid, thief.id, amount)
+                return await interaction.response.send_message(
+                    f"🦹 **Success!** {thief.mention} stole **{amount:,}** {COIN} from {target.mention}!")
+            return await interaction.response.send_message(f"{target.mention} spent their coins just in time. Heist failed!")
+
+        fine = min(get_user(gid, thief.id)["coins"], random.randint(50, 200))
+        take_coins(gid, thief.id, fine)
+        add_coins(gid, target.id, fine)
+        await interaction.response.send_message(
+            f"🚔 **Caught!** {thief.mention} was fined **{fine:,}** {COIN}, paid to {target.mention}.")
+
+    @slash("leaderboard", "See the richest or highest-level members")
+    @app_commands.describe(kind="What to rank by")
+    @app_commands.choices(kind=[app_commands.Choice(name="Net worth", value="coins"),
+                                app_commands.Choice(name="Level / XP", value="xp")])
+    async def leaderboard(interaction: discord.Interaction, kind: Optional[app_commands.Choice[str]] = None):
+        mode = kind.value if kind else "coins"
+        if mode == "xp":
+            rows = db.execute("SELECT user_id, xp AS score FROM users WHERE guild_id=? AND xp>0 "
+                              "ORDER BY xp DESC LIMIT 10", (interaction.guild.id,)).fetchall()
+            title = "🏆 Level leaderboard"
+        else:
+            rows = db.execute("SELECT user_id, coins+bank AS score FROM users WHERE guild_id=? AND coins+bank>0 "
+                              "ORDER BY score DESC LIMIT 10", (interaction.guild.id,)).fetchall()
+            title = "💰 Richest members"
+        if not rows:
+            return await reply_error(interaction, "Nobody is on the leaderboard yet. Start chatting and use `/daily`!")
+        medals = ["🥇", "🥈", "🥉"]
+        lines = []
+        for i, r in enumerate(rows):
+            prefix = medals[i] if i < 3 else f"`{i + 1}.`"
+            value = f"Level {level_from_xp(r['score'])[0]} ({r['score']:,} XP)" if mode == "xp" else f"{COIN} {r['score']:,}"
+            lines.append(f"{prefix} <@{r['user_id']}> - {value}")
+        await interaction.response.send_message(
+            embed=discord.Embed(title=title, description="\n".join(lines), color=discord.Color.gold()))
+
+    # ---------------- LEVELING ----------------
+    @slash("rank", "Show your level and XP progress")
+    @app_commands.describe(member="Whose rank to view (leave empty for yourself)")
+    async def rank(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+        target = member or interaction.user
+        row = get_user(interaction.guild.id, target.id)
+        level, into = level_from_xp(row["xp"])
+        need = xp_needed(level)
+        position = db.execute("SELECT COUNT(*)+1 AS p FROM users WHERE guild_id=? AND xp>?",
+                              (interaction.guild.id, row["xp"])).fetchone()["p"]
+        e = discord.Embed(title=f"{target.display_name}'s rank", color=target.color if target.color.value else discord.Color.blurple())
+        e.set_thumbnail(url=target.display_avatar.url)
+        e.add_field(name="Level", value=str(level))
+        e.add_field(name="Server rank", value=f"#{position}")
+        e.add_field(name="Total XP", value=f"{row['xp']:,}")
+        e.add_field(name="Progress", value=f"`{progress_bar(into, need)}` {into:,}/{need:,} XP", inline=False)
+        if row["boost_until"] > time.time():
+            e.set_footer(text=f"⚡ 2x XP boost active for {fmt_duration(row['boost_until'] - time.time())}")
+        await interaction.response.send_message(embed=e)
+
+    levelrole = app_commands.Group(
+        name="levelrole", description="Manage roles given at certain levels",
+        guild_only=True, default_permissions=discord.Permissions(manage_guild=True))
+
+    @levelrole.command(name="add", description="Give a role to members who reach a level")
+    @app_commands.describe(level="The level that unlocks the role", role="The role to give")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def levelrole_add(interaction: discord.Interaction, level: app_commands.Range[int, 1, 500], role: discord.Role):
+        if role >= interaction.guild.me.top_role or role.is_default():
+            return await reply_error(interaction, "❌ I can't hand out that role (it's higher than my top role).")
+        db.execute("INSERT OR REPLACE INTO level_roles (guild_id, level, role_id) VALUES (?, ?, ?)",
+                   (interaction.guild.id, level, role.id))
+        db.commit()
+        await interaction.response.send_message(f"✅ Members reaching **level {level}** will get {role.mention}.",
+                                                allowed_mentions=discord.AllowedMentions.none())
+
+    @levelrole.command(name="remove", description="Remove a level reward")
+    @app_commands.describe(level="The level to clear")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def levelrole_remove(interaction: discord.Interaction, level: app_commands.Range[int, 1, 500]):
+        cur = db.execute("DELETE FROM level_roles WHERE guild_id=? AND level=?", (interaction.guild.id, level))
+        db.commit()
+        msg = f"🗑️ Removed the reward for level {level}." if cur.rowcount else "❌ No reward set for that level."
+        await interaction.response.send_message(msg, ephemeral=True)
+
+    @levelrole.command(name="list", description="Show all level rewards")
+    async def levelrole_list(interaction: discord.Interaction):
+        rows = db.execute("SELECT level, role_id FROM level_roles WHERE guild_id=? ORDER BY level",
+                          (interaction.guild.id,)).fetchall()
+        if not rows:
+            return await reply_error(interaction, "No level rewards set. Admins can add some with `/levelrole add`.")
+        await interaction.response.send_message(
+            "\n".join(f"Level **{r['level']}** -> <@&{r['role_id']}>" for r in rows),
+            allowed_mentions=discord.AllowedMentions.none())
+
+    tree.add_command(levelrole)
+    _commands["levelrole add"] = levelrole_add
+    _commands["levelrole remove"] = levelrole_remove
+    _commands["levelrole list"] = levelrole_list
+
+    @slash("addcoins", "Admin: add or remove coins from a member")
+    @app_commands.describe(member="The member", amount="Positive to add, negative to remove")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def addcoins(interaction: discord.Interaction, member: discord.Member,
+                       amount: app_commands.Range[int, -1000000, 1000000]):
+        add_coins(interaction.guild.id, member.id, amount)
+        await interaction.response.send_message(f"✅ Adjusted {member.display_name}'s wallet by **{amount:+,}** {COIN}.",
+                                                ephemeral=True)
+
+    # ---------------- SHOP ----------------
+    @slash("shop", "Browse items you can buy with coins")
+    async def shop(interaction: discord.Interaction):
+        e = discord.Embed(title="🛒 Shop", description="Buy with `/buy`.", color=discord.Color.blurple())
+        for key, item in SHOP.items():
+            e.add_field(name=f"{item['emoji']} {item['name']} - {item['price']:,} {COIN}", value=item["desc"], inline=False)
+        await interaction.response.send_message(embed=e)
+
+    @slash("buy", "Buy an item from the shop")
+    @app_commands.describe(item="What to buy", quantity="How many (default 1)")
+    @app_commands.choices(item=item_choices())
+    async def buy(interaction: discord.Interaction, item: app_commands.Choice[str],
+                  quantity: app_commands.Range[int, 1, 20] = 1):
+        info = SHOP[item.value]
+        cost = info["price"] * quantity
+        if not take_coins(interaction.guild.id, interaction.user.id, cost):
+            return await reply_error(interaction, f"❌ You need **{cost:,}** {COIN} in your wallet for that.")
+        inv_add(interaction.guild.id, interaction.user.id, item.value, quantity)
+        await interaction.response.send_message(
+            f"✅ Bought **{quantity}x {info['emoji']} {info['name']}** for **{cost:,}** {COIN}.")
+
+    @slash("inventory", "See the items you own")
+    @app_commands.describe(member="Whose inventory to view (leave empty for yourself)")
+    async def inventory(interaction: discord.Interaction, member: Optional[discord.Member] = None):
+        target = member or interaction.user
+        rows = db.execute("SELECT item, qty FROM inventory WHERE guild_id=? AND user_id=? AND qty>0",
+                          (interaction.guild.id, target.id)).fetchall()
+        if not rows:
+            return await interaction.response.send_message(f"{target.display_name} owns nothing yet. Try `/shop`!")
+        lines = [f"{SHOP[r['item']]['emoji']} **{SHOP[r['item']]['name']}** x{r['qty']}" for r in rows if r["item"] in SHOP]
+        await interaction.response.send_message(
+            embed=discord.Embed(title=f"🎒 {target.display_name}'s inventory", description="\n".join(lines),
+                                color=discord.Color.blurple()))
+
+    @slash("use", "Use an item from your inventory")
+    @app_commands.describe(item="The item to use")
+    @app_commands.choices(item=item_choices(["xp_boost", "mystery_box"]))
+    async def use(interaction: discord.Interaction, item: app_commands.Choice[str]):
+        gid, uid = interaction.guild.id, interaction.user.id
+        if not inv_take(gid, uid, item.value):
+            return await reply_error(interaction, "❌ You don't own that item. Check `/shop`.")
+        if item.value == "xp_boost":
+            start = max(time.time(), get_user(gid, uid)["boost_until"])
+            set_field(gid, uid, boost_until=start + 3600)
+            return await interaction.response.send_message(
+                "⚡ **XP Boost activated!** You earn double chat XP for the next hour (stacks if you use more).")
+        prize = random.choices([100, 200, 300, 500, 1000, 2500], weights=[30, 25, 20, 13, 9, 3])[0]
+        add_coins(gid, uid, prize)
+        await interaction.response.send_message(f"🎁 You opened the Mystery Box and found **{prize:,}** {COIN}!")
+
+    # ---------------- GAMBLING ----------------
+    slot_symbols = ["🍒", "🍋", "🍇", "🔔", "💎", "7️⃣"]
+    slot_payout = {"🍒": 3, "🍋": 4, "🍇": 5, "🔔": 8, "💎": 15, "7️⃣": 25}
+
+    @slash("slots", "Spin the slot machine")
+    @app_commands.describe(bet=f"Coins to bet (10-{MAX_BET:,})")
+    async def slots(interaction: discord.Interaction, bet: app_commands.Range[int, 10, MAX_BET]):
+        gid, uid = interaction.guild.id, interaction.user.id
+        if not take_coins(gid, uid, bet):
+            return await reply_error(interaction, "❌ You don't have enough coins in your wallet.")
+
+        await interaction.response.send_message("🎰 **Spinning...**\n`[ 🎰 | 🎰 | 🎰 ]`")
+        await asyncio.sleep(1.2)
+
+        reels = [random.choice(slot_symbols) for _ in range(3)]
+        display = f"`[ {' | '.join(reels)} ]`"
+        if len(set(reels)) == 1:
+            payout = bet * slot_payout[reels[0]]
+            result = f"🎉 **JACKPOT!** x{slot_payout[reels[0]]}"
+        elif len(set(reels)) == 2:
+            payout = int(bet * 1.5)
+            result = "✨ Two of a kind! x1.5"
+        else:
+            payout = 0
+            result = "💀 No match."
+        if payout:
+            add_coins(gid, uid, payout)
+        await interaction.edit_original_response(
+            content=f"🎰 **Slots**\n{display}\n{result} ({payout - bet:+,} {COIN})")
+
+    @slash("betflip", "Bet coins on a coin flip (50/50)")
+    @app_commands.describe(bet=f"Coins to bet (10-{MAX_BET:,})", side="Heads or tails?")
+    @app_commands.choices(side=[app_commands.Choice(name="Heads", value="heads"),
+                                app_commands.Choice(name="Tails", value="tails")])
+    async def betflip(interaction: discord.Interaction, bet: app_commands.Range[int, 10, MAX_BET],
+                      side: app_commands.Choice[str]):
+        gid, uid = interaction.guild.id, interaction.user.id
+        if not take_coins(gid, uid, bet):
+            return await reply_error(interaction, "❌ You don't have enough coins in your wallet.")
+        result = random.choice(["heads", "tails"])
+        if result == side.value:
+            add_coins(gid, uid, bet * 2)
+            await interaction.response.send_message(f"🪙 It landed on **{result}**! You won **{bet:,}** {COIN}!")
+        else:
+            await interaction.response.send_message(f"🪙 It landed on **{result}**. You lost **{bet:,}** {COIN}.")
+
+    @slash("blackjack", "Play blackjack against the dealer")
+    @app_commands.describe(bet=f"Coins to bet (10-{MAX_BET:,})")
+    async def blackjack(interaction: discord.Interaction, bet: app_commands.Range[int, 10, MAX_BET]):
+        gid = interaction.guild.id
+        if not take_coins(gid, interaction.user.id, bet):
+            return await reply_error(interaction, "❌ You don't have enough coins in your wallet.")
+        view = BlackjackView(interaction.user, gid, bet)
+        if hand_value(view.player) == 21:
+            outcome = "push" if hand_value(view.dealer) == 21 else "blackjack"
+            return await interaction.response.send_message(embed=view.finish(outcome))
+        await interaction.response.send_message(embed=view.embed(), view=view)
+        view.message = await interaction.original_response()
+
+    # ---------------- MINI-GAMES ----------------
+    @slash("rps", "Play rock-paper-scissors against the bot")
+    @app_commands.describe(bet="Optional coins to bet (win = double, tie = refund)")
+    async def rps(interaction: discord.Interaction, bet: app_commands.Range[int, 0, MAX_BET] = 0):
+        gid = interaction.guild.id
+        if bet and not take_coins(gid, interaction.user.id, bet):
+            return await reply_error(interaction, "❌ You don't have enough coins in your wallet.")
+        view = RPSView(interaction.user, gid, bet)
+        suffix = f" (bet: {bet:,} {COIN})" if bet else ""
+        await interaction.response.send_message(f"✊ Pick your move!{suffix}", view=view)
+        view.message = await interaction.original_response()
+
+    @slash("tictactoe", "Challenge a member to tic-tac-toe")
+    @app_commands.describe(opponent="Who you want to play against")
+    async def tictactoe(interaction: discord.Interaction, opponent: discord.Member):
+        if opponent.bot or opponent.id == interaction.user.id:
+            return await reply_error(interaction, "❌ Pick another (non-bot) member.")
+        view = TicTacToeView(interaction.user, opponent)
+        await interaction.response.send_message(
+            f"❌ {interaction.user.mention} vs ⭕ {opponent.mention}\n{interaction.user.mention} goes first (X)!",
+            view=view)
+        view.message = await interaction.original_response()
+
+    @slash("trivia", "Answer a trivia question - first correct answer wins coins")
+    async def trivia(interaction: discord.Interaction):
+        await interaction.response.defer()
+        data = await fetch_json("https://opentdb.com/api.php", amount=1, type="multiple", encode="url3986")
+        question = None
+        if data and data.get("results"):
+            r = data["results"][0]
+            question = {
+                "q": unquote(r["question"]), "a": unquote(r["correct_answer"]),
+                "w": [unquote(x) for x in r["incorrect_answers"]],
+                "d": r["difficulty"], "c": unquote(r["category"]),
+            }
+        if question is None:
+            question = random.choice(FALLBACK_TRIVIA)
+
+        reward = {"easy": 50, "medium": 100, "hard": 150}.get(question["d"], 75)
+        answers = [question["a"], *question["w"]]
+        random.shuffle(answers)
+        e = discord.Embed(title="🧠 Trivia", description=question["q"], color=discord.Color.random())
+        e.add_field(name="Category", value=question["c"])
+        e.add_field(name="Difficulty", value=question["d"].title())
+        e.set_footer(text=f"First correct answer wins {reward} coins - 20 seconds!")
+        view = TriviaView(interaction.guild.id, question["a"], answers, reward)
+        view.message = await interaction.followup.send(embed=e, view=view, wait=True)
+
+    # ---------------- RANDOM CONTENT ----------------
+    @slash("cat", "Get a random cat picture")
+    async def cat(interaction: discord.Interaction):
+        await interaction.response.defer()
+        data = await fetch_json("https://api.thecatapi.com/v1/images/search")
+        if not data:
+            return await interaction.followup.send("😿 The cat service is napping. Try again in a moment.")
+        e = discord.Embed(title="🐱 Meow!", color=discord.Color.orange())
+        e.set_image(url=data[0]["url"])
+        await interaction.followup.send(embed=e)
+
+    @slash("dog", "Get a random dog picture")
+    async def dog(interaction: discord.Interaction):
+        await interaction.response.defer()
+        data = await fetch_json("https://dog.ceo/api/breeds/image/random")
+        if not data or "message" not in data:
+            return await interaction.followup.send("🐶 The dog service is out for a walk. Try again in a moment.")
+        e = discord.Embed(title="🐶 Woof!", color=discord.Color.orange())
+        e.set_image(url=data["message"])
+        await interaction.followup.send(embed=e)
+
+    @slash("meme", "Get a random meme from Reddit")
+    async def meme(interaction: discord.Interaction):
+        await interaction.response.defer()
+        for _ in range(3):
+            data = await fetch_json("https://meme-api.com/gimme")
+            if data and data.get("url") and not data.get("nsfw") and not data.get("spoiler"):
+                e = discord.Embed(title=data.get("title", "Meme")[:250], url=data.get("postLink"),
+                                  color=discord.Color.random())
+                e.set_image(url=data["url"])
+                e.set_footer(text=f"r/{data.get('subreddit', 'memes')}")
+                return await interaction.followup.send(embed=e)
+        await interaction.followup.send("😵 Couldn't fetch a meme right now. Try again in a moment.")
+
+    @slash("joke", "Get a random joke")
+    async def joke(interaction: discord.Interaction):
+        await interaction.response.defer()
+        data = await fetch_json("https://official-joke-api.appspot.com/random_joke")
+        if not data or "setup" not in data:
+            return await interaction.followup.send("🤡 I forgot the joke. Try again in a moment.")
+        await interaction.followup.send(f"**{data['setup']}**\n||{data['punchline']}||")
+
+    @slash("fact", "Get a random useless fact")
+    async def fact(interaction: discord.Interaction):
+        await interaction.response.defer()
+        data = await fetch_json("https://uselessfacts.jsph.pl/api/v2/facts/random", language="en")
+        if not data or "text" not in data:
+            return await interaction.followup.send("📚 My fact book is closed right now. Try again in a moment.")
+        await interaction.followup.send(f"📚 **Did you know?**\n{data['text']}")
+
+    @slash("ship", "Check how compatible two members are")
+    @app_commands.describe(first="The first member", second="The second member (leave empty for yourself)")
+    async def ship(interaction: discord.Interaction, first: discord.Member, second: Optional[discord.Member] = None):
+        other = second or interaction.user
+        a, b = sorted((first.id, other.id))
+        pct = int(hashlib.md5(f"{a}-{b}".encode()).hexdigest()[:6], 16) % 101
+        if pct < 25:
+            verdict = "Better as strangers. 💔"
+        elif pct < 50:
+            verdict = "Just friends... maybe. 🤝"
+        elif pct < 75:
+            verdict = "There's a spark! ✨"
+        elif pct < 90:
+            verdict = "A great match! 💕"
+        else:
+            verdict = "Soulmates! 💘"
+        n1, n2 = first.display_name, other.display_name
+        ship_name = n1[:max(1, len(n1) // 2)] + n2[len(n2) // 2:]
+        e = discord.Embed(
+            title=f"💞 {n1} x {n2}",
+            description=f"**Ship name:** {ship_name}\n`{progress_bar(pct, 100, 20)}` **{pct}%**\n{verdict}",
+            color=discord.Color.magenta())
+        await interaction.response.send_message(embed=e)
+
+    @slash("choose", "Let the bot pick between options")
+    @app_commands.describe(options="Separate options with commas, e.g. pizza, sushi, tacos")
+    async def choose(interaction: discord.Interaction, options: str):
+        parts = [p.strip() for p in options.replace(" or ", ",").split(",") if p.strip()]
+        if len(parts) < 2:
+            return await reply_error(interaction, "❌ Give me at least two options separated by commas.")
+        await interaction.response.send_message(
+            f"🤔 I choose... **{random.choice(parts)}**!", allowed_mentions=discord.AllowedMentions.none())
 
 
-@tree.command(name="say", description="Make the bot repeat a message")
-@app_commands.describe(message="The text you want the bot to say")
-@is_authorized()
-async def say(interaction: discord.Interaction, message: str):
-    await interaction.response.send_message("Sending message...", ephemeral=True)
-    await interaction.channel.send(message)
+# ====================== PREFIX (!v) SUPPORT ======================
+# Every slash command above is also available as `!v <command> ...`. The prefix handler
+# builds a small stand-in for the Interaction object and calls the very same command code,
+# so both versions always behave identically. Buttons (blackjack, trivia, ...) work as usual.
+PREFIX_HELP = (
+    "**🎮 Economy & fun (`!v`)**\n"
+    "**Economy:** `balance [@m]`, `daily`, `work`, `pay @m <amt>`, `deposit <amt|all>`, "
+    "`withdraw <amt|all>`, `steal @m`, `leaderboard [coins|xp]`\n"
+    "**Levels:** `rank [@m]`, `levelrole add <level> @role`, `levelrole remove <level>`, `levelrole list`\n"
+    "**Shop:** `shop`, `buy <item> [qty]`, `inventory [@m]`, `use <item>`\n"
+    "**Games:** `slots <bet>`, `betflip <bet> <heads|tails>`, `blackjack <bet>`, `rps [bet]`, "
+    "`tictactoe @m`, `trivia`\n"
+    "**Random:** `cat`, `dog`, `meme`, `joke`, `fact`, `ship @a [@b]`, `choose a, b, c`\n"
+    "**Admin:** `addcoins @m <amount>`\n"
+    "Bets accept `all`. Aliases: `bal`, `lb`, `inv`, `bj`, `ttt`."
+)
+
+_ALIASES = {"bal": "balance", "lb": "leaderboard", "top": "leaderboard", "inv": "inventory",
+            "bj": "blackjack", "ttt": "tictactoe", "bf": "betflip", "dep": "deposit",
+            "with": "withdraw", "lvl": "rank", "level": "rank"}
 
 
-@tree.command(name="coinflip", description="Flip a coin. Heads you win, Tails you get timed out!")
-async def coinflip(interaction: discord.Interaction):
-    if random.choice(["Heads", "Tails"]) == "Heads":
-        await interaction.response.send_message("🪙 **Heads!** You lucked out. You survive... for now.")
+class _PrefixResponse:
+    """Mimics interaction.response for messages sent with the prefix."""
+
+    def __init__(self, ctx: "PrefixContext"):
+        self.ctx = ctx
+        self._done = False
+
+    def is_done(self) -> bool:
+        return self._done
+
+    async def defer(self, **_) -> None:
+        self._done = True
+
+    async def send_message(self, content=None, *, embed=None, view=None, ephemeral=False,
+                           allowed_mentions=None, **_) -> None:
+        kwargs = {k: v for k, v in (("content", content), ("embed", embed), ("view", view),
+                                    ("allowed_mentions", allowed_mentions)) if v is not None}
+        if ephemeral:  # prefix messages can't be private, so reply quietly instead
+            try:
+                sent = await self.ctx.message.reply(mention_author=False, **kwargs)
+            except discord.HTTPException:
+                sent = await self.ctx.channel.send(**kwargs)
+        else:
+            sent = await self.ctx.channel.send(**kwargs)
+        self.ctx.sent = sent
+        self._done = True
+
+
+class _PrefixFollowup:
+    def __init__(self, ctx: "PrefixContext"):
+        self.ctx = ctx
+
+    async def send(self, content=None, *, embed=None, view=None, wait=False, ephemeral=False,
+                   allowed_mentions=None, **_):
+        kwargs = {k: v for k, v in (("content", content), ("embed", embed), ("view", view),
+                                    ("allowed_mentions", allowed_mentions)) if v is not None}
+        sent = await self.ctx.channel.send(**kwargs)
+        self.ctx.sent = sent
+        return sent
+
+
+class PrefixContext:
+    """Stand-in for discord.Interaction, built from a normal message."""
+
+    def __init__(self, message: discord.Message):
+        self.message = message
+        self.guild = message.guild
+        self.channel = message.channel
+        self.user = message.author
+        self.sent: Optional[discord.Message] = None
+        self.response = _PrefixResponse(self)
+        self.followup = _PrefixFollowup(self)
+
+    async def original_response(self) -> Optional[discord.Message]:
+        return self.sent
+
+    async def edit_original_response(self, **kwargs) -> None:
+        if self.sent:
+            await self.sent.edit(**kwargs)
+
+
+class _BadArgs(Exception):
+    """Raised by parsers; an empty message means 'show the usage line'."""
+
+
+def _need(args: list, count: int) -> None:
+    if len(args) < count:
+        raise _BadArgs()
+
+
+def _id_from(token: str, chars: str) -> Optional[int]:
+    digits = token.strip(chars)
+    return int(digits) if digits.isdigit() else None
+
+
+def _member_arg(message: discord.Message, token: str) -> discord.Member:
+    member_id = _id_from(token, "<@!>")
+    member = message.guild.get_member(member_id) if member_id else None
+    if member is None:
+        raise _BadArgs("❌ I couldn't find that member. Mention them or use their ID.")
+    return member
+
+
+def _opt_member(message: discord.Message, args: list, index: int = 0) -> Optional[discord.Member]:
+    return _member_arg(message, args[index]) if len(args) > index else None
+
+
+def _int_arg(token: str, lo: int, hi: int, what: str = "amount") -> int:
+    try:
+        n = int(token.replace(",", ""))
+    except ValueError:
+        raise _BadArgs(f"❌ `{token}` isn't a valid {what}.")
+    if not lo <= n <= hi:
+        raise _BadArgs(f"❌ The {what} must be between {lo:,} and {hi:,}.")
+    return n
+
+
+def _wallet(message: discord.Message) -> int:
+    return get_user(message.guild.id, message.author.id)["coins"]
+
+
+def _amount_arg(message: discord.Message, token: str) -> int:
+    if token.lower() in ("all", "max"):
+        if _wallet(message) < 1:
+            raise _BadArgs("❌ Your wallet is empty.")
+        return _wallet(message)
+    return _int_arg(token, 1, 10 ** 12)
+
+
+def _bet_arg(message: discord.Message, token: str, lo: int = 10) -> int:
+    if token.lower() in ("all", "max"):
+        n = min(_wallet(message), MAX_BET)
+        if n < lo:
+            raise _BadArgs("❌ You don't have enough coins in your wallet.")
+        return n
+    return _int_arg(token, lo, MAX_BET, "bet")
+
+
+def _item_arg(tokens: list, only: Optional[list] = None) -> app_commands.Choice:
+    key = "_".join(tokens).lower()
+    if key not in SHOP or (only and key not in only):
+        raise _BadArgs("❌ Unknown item. Options: " + ", ".join(only or list(SHOP)))
+    return app_commands.Choice(name=SHOP[key]["name"], value=key)
+
+
+def _p_leaderboard(m, a):
+    if a and a[0].lower() in ("xp", "level", "levels", "lvl"):
+        return {"kind": app_commands.Choice(name="Level / XP", value="xp")}
+    return {"kind": None}
+
+
+def _p_buy(m, a):
+    _need(a, 1)
+    tokens = list(a)
+    quantity = 1
+    if len(tokens) > 1 and tokens[-1].isdigit():
+        quantity = _int_arg(tokens.pop(), 1, 20, "quantity")
+    return {"item": _item_arg(tokens), "quantity": quantity}
+
+
+def _p_betflip(m, a):
+    _need(a, 2)
+    side = a[1].lower()
+    if side in ("h", "heads"):
+        choice = app_commands.Choice(name="Heads", value="heads")
+    elif side in ("t", "tails"):
+        choice = app_commands.Choice(name="Tails", value="tails")
     else:
-        try:
-            await interaction.user.timeout(timedelta(seconds=60), reason="Lost the coinflip")
-            await interaction.response.send_message("🪙 **Tails!** Enjoy your **1-minute timeout**! :D")
-        except discord.Forbidden:
-            await interaction.response.send_message(
-                "🪙 **Tails!** You should be timed out, but your permissions protected you. (error code 7)"
-            )
+        raise _BadArgs()
+    return {"bet": _bet_arg(m, a[0]), "side": choice}
 
 
-# (`/steal` now lives in fun.py with real coins)
-
-@tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
-@app_commands.describe(thing="The object, person, or idea you want rated")
-async def rate(interaction: discord.Interaction, thing: str):
-    await interaction.response.send_message(rate_text(thing))
-
-
-@tree.command(name="8ball", description="Ask the Magic 8-Ball a question")
-@app_commands.describe(question="The question you want answered")
-async def eightball(interaction: discord.Interaction, question: str):
-    await interaction.response.send_message(
-        f"**The Magic 8-Ball**\n**Question:** {question}\n**Answer:** {random.choice(EIGHTBALL_RESPONSES)}"
-    )
+def _p_levelrole_add(m, a):
+    _need(a, 2)
+    role_id = _id_from(a[1], "<@&>")
+    role = m.guild.get_role(role_id) if role_id else None
+    if role is None:
+        raise _BadArgs("❌ I couldn't find that role. Mention it or use its ID.")
+    return {"level": _int_arg(a[0], 1, 500, "level"), "role": role}
 
 
-@tree.command(name="slap", description="Slap a server member with a random object!")
-@app_commands.describe(target="The server member you want to slap")
-async def slap(interaction: discord.Interaction, target: discord.Member):
-    if target == interaction.user:
-        await interaction.response.send_message(f"{interaction.user.mention} tried to slap themselves but missed.")
-        return
-
-    await interaction.response.send_message(
-        f"WHACK! {interaction.user.mention} slaps {target.mention} with {random.choice(SLAP_ITEMS)}!"
-    )
+def _p_pay(m, a):
+    _need(a, 2)
+    return {"member": _member_arg(m, a[0]), "amount": _amount_arg(m, a[1])}
 
 
-@tree.command(name="roast", description="Hit a fellow server member with a funny roast!")
-@app_commands.describe(target="The server member you want to roast")
-async def roast(interaction: discord.Interaction, target: discord.Member):
-    if target == interaction.user:
-        await interaction.response.send_message(
-            f"{interaction.user.mention}, roasting error: check code e12.", ephemeral=True)
-        return
-    if target == bot.user:
-        await interaction.response.send_message(
-            "You can't roast bots.. Not on discord.. (error code 9)", ephemeral=True)
-        return
-
-    await interaction.response.send_message(f"{target.mention}, {random.choice(ROASTS)}")
+def _p_ship(m, a):
+    _need(a, 1)
+    return {"first": _member_arg(m, a[0]), "second": _opt_member(m, a, 1)}
 
 
-@tree.command(name="avatar", description="Fetch a user's profile picture")
-@app_commands.describe(target="The server member (leave empty for yourself)")
-async def avatar(interaction: discord.Interaction, target: Optional[discord.Member] = None):
-    await interaction.response.send_message(embed=build_avatar_embed(target or interaction.user))
+def _p_addcoins(m, a):
+    _need(a, 2)
+    return {"member": _member_arg(m, a[0]), "amount": _int_arg(a[1], -1_000_000, 1_000_000)}
 
 
-@tree.command(name="whois", description="View detailed profile information")
-@app_commands.describe(target="The server member (leave empty for yourself)")
-async def whois(interaction: discord.Interaction, target: Optional[discord.Member] = None):
-    await interaction.response.send_message(
-        embed=build_whois_embed(target or interaction.user, interaction.user))
+def _p_choose(m, a):
+    _need(a, 1)
+    return {"options": " ".join(a)}
 
 
-@tree.command(name="qna", description="Get a random silly question about anything")
-@app_commands.describe(topic="Optional topic: food, gaming or life (leave empty for random)")
-async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
-    await interaction.response.send_message(embed=build_qna_embed(topic))
+def _p_use(m, a):
+    _need(a, 1)
+    return {"item": _item_arg(a, ["xp_boost", "mystery_box"])}
 
 
-# ====================== SLASH MODERATION COMMANDS ======================
-# Devs and the server owner always pass. Administrators pass automatically.
-# Everyone else needs the matching Discord permission. Devs and the owner also
-# skip the "equal or higher role" check (the bot's own role must still be high enough).
-
-@tree.command(name="kick", description="Kick a member from the server")
-@app_commands.describe(member="The member to kick", reason="Reason for the kick")
-@dev_or_permissions(kick_members=True)
-async def kick(interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
-    error = hierarchy_error(interaction.user, member, interaction.guild, "kick")
-    if error:
-        return await interaction.response.send_message(error, ephemeral=True)
-
-    try:
-        await member.kick(reason=f"{interaction.user} | {reason}")
-        await interaction.response.send_message(f"{member} has been kicked.\nReason: {reason}")
-    except discord.Forbidden:
-        await interaction.response.send_message(
-            "I don't have permission to kick this member. (error code e13)", ephemeral=True)
+def _p_deposit(m, a):
+    _need(a, 1)
+    return {"amount": a[0]}
 
 
-@tree.command(name="ban", description="Ban a member from the server")
-@app_commands.describe(
-    member="The member to ban",
-    reason="Reason for the ban",
-    delete_days="Delete messages from last X days"
-)
-@dev_or_permissions(ban_members=True)
-async def ban(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    reason: str = "No reason provided",
-    delete_days: app_commands.Range[int, 0, 7] = 0
-):
-    error = hierarchy_error(interaction.user, member, interaction.guild, "ban")
-    if error:
-        return await interaction.response.send_message(error, ephemeral=True)
+# command -> (usage, argument parser, admin only)
+_PREFIX = {
+    "balance": ("balance [@member]", lambda m, a: {"member": _opt_member(m, a)}, False),
+    "rank": ("rank [@member]", lambda m, a: {"member": _opt_member(m, a)}, False),
+    "inventory": ("inventory [@member]", lambda m, a: {"member": _opt_member(m, a)}, False),
+    "daily": ("daily", lambda m, a: {}, False),
+    "work": ("work", lambda m, a: {}, False),
+    "shop": ("shop", lambda m, a: {}, False),
+    "pay": ("pay @member <amount|all>", _p_pay, False),
+    "deposit": ("deposit <amount|half|all>", _p_deposit, False),
+    "withdraw": ("withdraw <amount|half|all>", _p_deposit, False),
+    "steal": ("steal @member", lambda m, a: (_need(a, 1), {"target": _member_arg(m, a[0])})[1], False),
+    "leaderboard": ("leaderboard [coins|xp]", _p_leaderboard, False),
+    "buy": ("buy <item> [quantity]", _p_buy, False),
+    "use": ("use <xp_boost|mystery_box>", _p_use, False),
+    "slots": ("slots <bet|all>", lambda m, a: (_need(a, 1), {"bet": _bet_arg(m, a[0])})[1], False),
+    "betflip": ("betflip <bet|all> <heads|tails>", _p_betflip, False),
+    "blackjack": ("blackjack <bet|all>", lambda m, a: (_need(a, 1), {"bet": _bet_arg(m, a[0])})[1], False),
+    "rps": ("rps [bet]", lambda m, a: {"bet": _bet_arg(m, a[0], 0) if a else 0}, False),
+    "tictactoe": ("tictactoe @opponent",
+                  lambda m, a: (_need(a, 1), {"opponent": _member_arg(m, a[0])})[1], False),
+    "trivia": ("trivia", lambda m, a: {}, False),
+    "cat": ("cat", lambda m, a: {}, False),
+    "dog": ("dog", lambda m, a: {}, False),
+    "meme": ("meme", lambda m, a: {}, False),
+    "joke": ("joke", lambda m, a: {}, False),
+    "fact": ("fact", lambda m, a: {}, False),
+    "ship": ("ship @member [@member]", _p_ship, False),
+    "choose": ("choose <option, option, ...>", _p_choose, False),
+    "addcoins": ("addcoins @member <amount>", _p_addcoins, True),
+    "levelrole add": ("levelrole add <level> @role", _p_levelrole_add, True),
+    "levelrole remove": ("levelrole remove <level>",
+                         lambda m, a: (_need(a, 1), {"level": _int_arg(a[0], 1, 500, "level")})[1], True),
+    "levelrole list": ("levelrole list", lambda m, a: {}, False),
+}
+
+
+async def handle_prefix(message: discord.Message, command: str, args: list, privileged: bool = False) -> bool:
+    """Call from your `!v` handler. Returns True if the command belonged to this module.
+
+    `privileged` should be True for devs / the owner / admins so they can use admin commands.
+    """
+    if message.guild is None or not _commands:
+        return False
+
+    args = list(args)
+    command = command.lower()
+    command = _ALIASES.get(command, command)
+    if command == "levelrole":
+        command = f"levelrole {args.pop(0).lower() if args else 'list'}"
+
+    entry = _PREFIX.get(command)
+    if entry is None or command not in _commands:
+        return False
+    usage, parser, admin_only = entry
+
+    send = message.channel.send
+    if admin_only and not (privileged or message.author.guild_permissions.manage_guild):
+        await send("❌ **Access Denied:** You need the `Manage Server` permission.")
+        return True
 
     try:
-        await member.ban(reason=f"{interaction.user} | {reason}", delete_message_seconds=delete_days * 86400)
-        await interaction.response.send_message(f"{member} has been banned.\nReason: {reason}")
-    except discord.Forbidden:
-        await interaction.response.send_message("I don't have permission to ban this member.", ephemeral=True)
+        kwargs = parser(message, args)
+    except _BadArgs as e:
+        await send(str(e) or f"❌ **Usage:** `!v {usage}`")
+        return True
 
-
-@tree.command(name="timeout", description="Timeout a member")
-@app_commands.describe(
-    member="The member to timeout",
-    minutes="Minutes to last",
-    reason="Reason for the timeout"
-)
-@dev_or_permissions(moderate_members=True)
-async def timeout(
-    interaction: discord.Interaction,
-    member: discord.Member,
-    minutes: app_commands.Range[int, 1, 40320],
-    reason: str = "No reason provided"
-):
-    error = hierarchy_error(interaction.user, member, interaction.guild, "timeout")
-    if error:
-        return await interaction.response.send_message(error, ephemeral=True)
-
-    try:
-        await member.timeout(timedelta(minutes=minutes), reason=f"{interaction.user} | {reason}")
-        await interaction.response.send_message(
-            f"{member} has been timed out for {minutes} minutes.\nReason: {reason}")
-    except discord.Forbidden:
-        await interaction.response.send_message("I don't have permission to timeout this member.", ephemeral=True)
-
-
-@tree.command(name="removetimeout", description="Remove timeout from a member")
-@app_commands.describe(member="The member to remove timeout from")
-@dev_or_permissions(moderate_members=True)
-async def removetimeout(interaction: discord.Interaction, member: discord.Member):
-    try:
-        await member.timeout(None)
-        await interaction.response.send_message(f"Timeout removed from {member}.")
-    except discord.Forbidden:
-        await interaction.response.send_message("I don't have permission to remove the timeout.", ephemeral=True)
-
-
-@tree.command(name="addrole", description="Give a role to a member")
-@app_commands.describe(member="The member", role="The role to give")
-@dev_or_permissions(manage_roles=True)
-async def addrole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
-    if role >= interaction.guild.me.top_role:
-        return await interaction.response.send_message("That role is higher than my highest role.", ephemeral=True)
-    if role >= interaction.user.top_role and not is_privileged_user(interaction.user, interaction.guild):
-        return await interaction.response.send_message(
-            "You can't give a role equal to or higher than your own.", ephemeral=True)
-    if role in member.roles:
-        return await interaction.response.send_message(
-            f"{member} already has the {role.name} role.", ephemeral=True)
-
-    try:
-        await member.add_roles(role, reason=f"Given by {interaction.user}")
-        await interaction.response.send_message(f"Gave {role.name} to {member}.")
-    except discord.Forbidden:
-        await interaction.response.send_message("I don't have permission to manage that role.", ephemeral=True)
-
-
-@tree.command(name="removerole", description="Remove a role from a member")
-@app_commands.describe(member="The member", role="The role to remove")
-@dev_or_permissions(manage_roles=True)
-async def removerole(interaction: discord.Interaction, member: discord.Member, role: discord.Role):
-    if role >= interaction.guild.me.top_role:
-        return await interaction.response.send_message("That role is higher than my highest role.", ephemeral=True)
-    if role >= interaction.user.top_role and not is_privileged_user(interaction.user, interaction.guild):
-        return await interaction.response.send_message(
-            "You can't remove a role equal to or higher than your own.", ephemeral=True)
-    if role not in member.roles:
-        return await interaction.response.send_message(
-            f"{member} doesn't have the {role.name} role.", ephemeral=True)
-
-    try:
-        await member.remove_roles(role, reason=f"Removed by {interaction.user}")
-        await interaction.response.send_message(f"Removed {role.name} from {member}.")
-    except discord.Forbidden:
-        await interaction.response.send_message("I don't have permission to manage that role.", ephemeral=True)
-
-
-# ====================== SLASH UTILITY CREATION COMMANDS ======================
-
-@tree.command(name="createcategory", description="Create a new category channel in the server.")
-@app_commands.describe(name="The name of the new category")
-@is_authorized()
-async def createcategory(interaction: discord.Interaction, name: str):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        category = await interaction.guild.create_category(name=name)
-        await interaction.followup.send(f"📁 Successfully created category: **{category.name}**", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed to create category: `{e}`", ephemeral=True)
-
-
-@tree.command(name="createchannel", description="Create a new text channel inside an optional category.")
-@app_commands.describe(name="The name of the text channel", category="The category folder to place this channel into")
-@is_authorized()
-async def createchannel(
-    interaction: discord.Interaction,
-    name: str,
-    category: Optional[discord.CategoryChannel] = None
-):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        formatted_name = name.lower().replace(" ", "-")
-        channel = await interaction.guild.create_text_channel(name=formatted_name, category=category)
-
-        location_text = f" inside **{category.name}**" if category else ""
-        await interaction.followup.send(
-            f"💬 Successfully created text channel: {channel.mention}{location_text}", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed to create text channel: `{e}`", ephemeral=True)
-
-
-@tree.command(name="createvoice", description="Create a new voice channel inside an optional category.")
-@app_commands.describe(name="The name of the voice channel", category="The category folder to place this voice channel into")
-@is_authorized()
-async def createvoice(
-    interaction: discord.Interaction,
-    name: str,
-    category: Optional[discord.CategoryChannel] = None
-):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        voice_channel = await interaction.guild.create_voice_channel(name=name, category=category)
-
-        location_text = f" inside **{category.name}**" if category else ""
-        await interaction.followup.send(
-            f"🔊 Successfully created voice channel: **{voice_channel.name}**{location_text}", ephemeral=True)
-    except discord.Forbidden:
-        await interaction.followup.send("❌ Error: I do not have permission to manage channels.", ephemeral=True)
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed to create voice channel: `{e}`", ephemeral=True)
-
-
-@tree.command(name="movechannel", description="Move a channel, voice channel, or category up or down.")
-@app_commands.describe(target="The channel, voice channel, or category folder you want to move", direction="Choose whether to nudge it Up or Down")
-@app_commands.choices(direction=[
-    app_commands.Choice(name="🔼 Move Up", value="up"),
-    app_commands.Choice(name="🔽 Move Down", value="down"),
-])
-@is_authorized()
-async def movechannel(
-    interaction: discord.Interaction,
-    target: discord.abc.GuildChannel,
-    direction: app_commands.Choice[str]
-):
-    await interaction.response.defer(ephemeral=True)
-
-    try:
-        # Moving 'up' lowers the position number (closer to 0); 'down' raises it
-        change = -1 if direction.value == "up" else 1
-        await target.edit(position=max(0, target.position + change))
-
-        await interaction.followup.send(
-            f"✅ Successfully moved **{target.name}** {direction.name.lower()}!",
-            ephemeral=True
-        )
-
-    except discord.Forbidden:
-        await interaction.followup.send(
-            "❌ Error: I don't have permission to manage this channel. "
-            "Make sure my bot role is high enough in the server settings!",
-            ephemeral=True
-        )
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed to move channel: `{e}`", ephemeral=True)
-
-
-# ====================== KEEP ALIVE ======================
-app = Flask(__name__)
-
-
-@app.route("/")
-def home():
-    return "Bot is online and active!"
-
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
-
-
-def keep_alive():
-    Thread(target=run_web_server, daemon=True).start()
-
-
-# ====================== START ======================
-if __name__ == "__main__":
-    token = os.environ.get("TOKEN")
-    if not token:
-        raise SystemExit("TOKEN environment variable is not set.")
-    keep_alive()
-    bot.run(token)
+    await _commands[command].callback(PrefixContext(message), **kwargs)
+    return True
