@@ -10,6 +10,10 @@ from discord import app_commands
 DB_PATH = os.environ.get("DB_PATH", "bot.db")
 COIN = "🪙"
 
+# Global toggle for chat XP/level progression.
+# Set env var LEVEL_SYSTEM_ENABLED=false or LEVEL_SYSTEM_ENABLED=0 to disable globally.
+LEVEL_SYSTEM_ENABLED = os.environ.get("LEVEL_SYSTEM_ENABLED", "true").strip().lower() not in {"0", "false", "off", "no", "disabled"}
+
 # SQLite setup
 _db = sqlite3.connect(DB_PATH)
 _db.row_factory = sqlite3.Row
@@ -125,6 +129,15 @@ def level_from_xp(total_xp: int):
     return level, total_xp
 
 
+def is_level_system_enabled() -> bool:
+    return LEVEL_SYSTEM_ENABLED
+
+
+def set_level_system_enabled(enabled: bool):
+    global LEVEL_SYSTEM_ENABLED
+    LEVEL_SYSTEM_ENABLED = bool(enabled)
+
+
 def progress_bar(current: int, total: int, width: int = 12) -> str:
     filled = int(width * current / total) if total else 0
     return "█" * filled + "░" * (width - filled)
@@ -156,18 +169,28 @@ async def apply_level_roles(member: discord.Member, level: int):
 async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
+    if not is_level_system_enabled():
+        return
+
     guild_id, user_id = message.guild.id, message.author.id
     row = get_user(guild_id, user_id)
     now = time.time()
     if now - row["last_msg"] < XP_COOLDOWN:
         return
+
+    old_xp = int(row["xp"])
     gain = random.randint(15, 25)
     if row["boost_until"] > now:
         gain *= 2
-    old_level, _ = level_from_xp(row["xp"])
+
+    old_level = level_from_xp(old_xp)[0]
+    new_xp = old_xp + gain
+    new_level = level_from_xp(new_xp)[0]
+
+    # Persist XP once and only award the level-up bonus on actual threshold crossing.
     _db.execute("UPDATE users SET xp = xp + ?, last_msg = ? WHERE guild_id=? AND user_id=?", (gain, now, guild_id, user_id))
     _db.commit()
-    new_level, _ = level_from_xp(row["xp"] + gain)
+
     if new_level > old_level:
         reward = new_level * 50
         add_coins(guild_id, user_id, reward)
@@ -204,6 +227,20 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
         embed.add_field(name="Net worth", value=f"💰 {row['coins'] + row['bank']:,}")
         embed.set_footer(text=f"Level {level}")
         await interaction.response.send_message(embed=embed)
+
+    @slash("disablelevelsystem", "Disable chat XP / leveling for the bot")
+    async def disablelevelsystem(interaction: discord.Interaction):
+        if not (interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318} or interaction.user == interaction.guild.owner or interaction.user.guild_permissions.administrator):
+            return await reply_error(interaction, "❌ You do not have permission to disable the level system.")
+        set_level_system_enabled(False)
+        await interaction.response.send_message("✅ The level system has been disabled.")
+
+    @slash("enablelevelsystem", "Enable chat XP / leveling for the bot")
+    async def enablelevelsystem(interaction: discord.Interaction):
+        if not (interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318} or interaction.user == interaction.guild.owner or interaction.user.guild_permissions.administrator):
+            return await reply_error(interaction, "❌ You do not have permission to enable the level system.")
+        set_level_system_enabled(True)
+        await interaction.response.send_message("✅ The level system has been enabled.")
 
     @slash("daily", "Claim your daily reward")
     async def daily(interaction: discord.Interaction):
@@ -462,12 +499,11 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
             return await reply_error(interaction, "❌ Give me at least two options separated by commas.")
         await interaction.response.send_message(f"🤔 I choose... **{random.choice(parts)}**!", allowed_mentions=discord.AllowedMentions.none())
 
-    # safe prefix help
     global PREFIX_HELP
     PREFIX_HELP = (
         "**🎮 Safe economy & fun (`!v`)**\n"
         "**Economy:** `balance [@m]`, `daily`, `work`, `pay @m <amt>`, `deposit <amt|all>`, `withdraw <amt|all>`\n"
-        "**Levels:** `rank [@m]`, `leaderboard [coins|xp]`\n"
+        "**Levels:** `rank [@m]`, `leaderboard [coins|xp]`, `disablelevelsystem`, `enablelevelsystem`\n"
         "**Shop:** `shop`, `buy <item> [qty]`, `inventory [@m]`, `use <item>`\n"
         "**Random:** `cat`, `dog`, `meme`, `joke`, `fact`, `ship @a [@b]`, `choose a, b, c`\n"
         "Aliases: `bal`, `lb`, `inv`, `lvl`, `level`."
@@ -539,7 +575,7 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
     if command not in _commands:
         return False
 
-    if command in {"addcoins"} and not (privileged or message.author.guild_permissions.manage_guild):
+    if command in {"disablelevelsystem", "enablelevelsystem"} and not (privileged or message.author.guild_permissions.manage_guild):
         await message.channel.send("❌ Access Denied: Manage Server required.")
         return True
 
@@ -582,7 +618,7 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
             return await _commands[command].callback(PrefixContext(message), first=first, second=second)
         if command == "choose":
             return await _commands[command].callback(PrefixContext(message), options=" ".join(args))
-        if command in {"shop", "daily", "work", "leaderboard", "cat", "dog", "meme", "joke", "fact"}:
+        if command in {"shop", "daily", "work", "leaderboard", "cat", "dog", "meme", "joke", "fact", "disablelevelsystem", "enablelevelsystem"}:
             return await _commands[command].callback(PrefixContext(message))
         if command == "pay":
             if len(args) < 2:
