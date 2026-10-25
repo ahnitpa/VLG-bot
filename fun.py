@@ -1,120 +1,103 @@
 import os
 import random
-import sqlite3
 import time
 from typing import Optional
 
 import discord
 from discord import app_commands
 
-DB_PATH = os.environ.get("DB_PATH", "bot.db")
 COIN = "🪙"
 
 # Global toggle for chat XP/level progression.
 # Set env var LEVEL_SYSTEM_ENABLED=false or LEVEL_SYSTEM_ENABLED=0 to disable globally.
 LEVEL_SYSTEM_ENABLED = os.environ.get("LEVEL_SYSTEM_ENABLED", "true").strip().lower() not in {"0", "false", "off", "no", "disabled"}
 
-# SQLite setup
-_db = sqlite3.connect(DB_PATH)
-_db.row_factory = sqlite3.Row
-_db.executescript("""
-CREATE TABLE IF NOT EXISTS users (
-    guild_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    coins INTEGER NOT NULL DEFAULT 0,
-    bank INTEGER NOT NULL DEFAULT 0,
-    xp INTEGER NOT NULL DEFAULT 0,
-    last_daily REAL NOT NULL DEFAULT 0,
-    daily_streak INTEGER NOT NULL DEFAULT 0,
-    last_work REAL NOT NULL DEFAULT 0,
-    last_msg REAL NOT NULL DEFAULT 0,
-    boost_until REAL NOT NULL DEFAULT 0,
-    PRIMARY KEY (guild_id, user_id)
-);
-CREATE TABLE IF NOT EXISTS inventory (
-    guild_id INTEGER NOT NULL,
-    user_id INTEGER NOT NULL,
-    item TEXT NOT NULL,
-    qty INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (guild_id, user_id, item)
-);
-""")
-_db.commit()
-
-_commands = {}
-DAILY_COOLDOWN = 86400
-WORK_COOLDOWN = 3600
-XP_COOLDOWN = 60
+# Ephemeral runtime storage only: values reset on redeploy and are not persisted to disk.
+_USERS = {}
+_INVENTORY = {}
 
 SHOP = {
     "xp_boost": {"name": "XP Boost", "emoji": "⚡", "price": 1500, "desc": "Double chat XP for one hour."},
     "mystery_box": {"name": "Mystery Box", "emoji": "🎁", "price": 400, "desc": "Win a safe bonus prize from 100 to 2500 coins."},
 }
 
+DAILY_COOLDOWN = 86400
+WORK_COOLDOWN = 3600
+XP_COOLDOWN = 60
 
-def get_user(guild_id: int, user_id: int) -> sqlite3.Row:
-    _db.execute("INSERT OR IGNORE INTO users (guild_id, user_id) VALUES (?, ?)", (guild_id, user_id))
-    return _db.execute("SELECT * FROM users WHERE guild_id=? AND user_id=?", (guild_id, user_id)).fetchone()
+
+def get_user(guild_id: int, user_id: int) -> dict:
+    key = (guild_id, user_id)
+    user = _USERS.get(key)
+    if user is None:
+        user = {
+            "guild_id": guild_id,
+            "user_id": user_id,
+            "coins": 0,
+            "bank": 0,
+            "xp": 0,
+            "last_daily": 0,
+            "daily_streak": 0,
+            "last_work": 0,
+            "last_msg": 0,
+            "boost_until": 0,
+        }
+        _USERS[key] = user
+    return user
 
 
 def add_coins(guild_id: int, user_id: int, amount: int):
-    get_user(guild_id, user_id)
-    _db.execute("UPDATE users SET coins = MAX(0, coins + ?) WHERE guild_id=? AND user_id=?", (amount, guild_id, user_id))
-    _db.commit()
+    user = get_user(guild_id, user_id)
+    user["coins"] = max(0, user["coins"] + amount)
 
 
 def take_coins(guild_id: int, user_id: int, amount: int) -> bool:
     if amount <= 0:
         return False
-    get_user(guild_id, user_id)
-    cur = _db.execute(
-        "UPDATE users SET coins = coins - ? WHERE guild_id=? AND user_id=? AND coins >= ?",
-        (amount, guild_id, user_id, amount),
-    )
-    _db.commit()
-    return cur.rowcount == 1
+    user = get_user(guild_id, user_id)
+    if user["coins"] < amount:
+        return False
+    user["coins"] -= amount
+    return True
 
 
 def set_field(guild_id: int, user_id: int, **fields):
-    get_user(guild_id, user_id)
-    cols = list(fields.keys())
-    if not cols:
-        return
-    sql = "UPDATE users SET " + ", ".join(f"{c}= ?" for c in cols) + " WHERE guild_id=? AND user_id=?"
-    _db.execute(sql, list(fields.values()) + [guild_id, user_id])
-    _db.commit()
+    user = get_user(guild_id, user_id)
+    for key, value in fields.items():
+        user[key] = value
 
 
 def inv_add(guild_id: int, user_id: int, item: str, qty: int = 1):
-    _db.execute(
-        "INSERT INTO inventory (guild_id, user_id, item, qty) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT(guild_id, user_id, item) DO UPDATE SET qty = qty + excluded.qty",
-        (guild_id, user_id, item, qty),
-    )
-    _db.commit()
+    key = (guild_id, user_id, item)
+    _INVENTORY[key] = _INVENTORY.get(key, 0) + qty
 
 
 def inv_take(guild_id: int, user_id: int, item: str, qty: int = 1) -> bool:
-    cur = _db.execute(
-        "UPDATE inventory SET qty = qty - ? WHERE guild_id=? AND user_id=? AND item=? AND qty >= ?",
-        (qty, guild_id, user_id, item, qty),
-    )
-    ok = cur.rowcount == 1
-    if ok:
-        _db.execute("DELETE FROM inventory WHERE guild_id=? AND user_id=? AND item=? AND qty <= 0", (guild_id, user_id, item))
-    _db.commit()
-    return ok
+    key = (guild_id, user_id, item)
+    current = _INVENTORY.get(key, 0)
+    if current < qty:
+        return False
+    remaining = current - qty
+    if remaining <= 0:
+        _INVENTORY.pop(key, None)
+    else:
+        _INVENTORY[key] = remaining
+    return True
 
 
 def move_money(guild_id: int, user_id: int, amount: int, to_bank: bool) -> bool:
-    get_user(guild_id, user_id)
+    user = get_user(guild_id, user_id)
     if to_bank:
-        sql = "UPDATE users SET coins=coins-?, bank=bank+? WHERE guild_id=? AND user_id=? AND coins>=?"
-    else:
-        sql = "UPDATE users SET bank=bank-?, coins=coins+? WHERE guild_id=? AND user_id=? AND bank>=?"
-    cur = _db.execute(sql, (amount, amount, guild_id, user_id, amount))
-    _db.commit()
-    return cur.rowcount == 1
+        if user["coins"] < amount:
+            return False
+        user["coins"] -= amount
+        user["bank"] += amount
+        return True
+    if user["bank"] < amount:
+        return False
+    user["bank"] -= amount
+    user["coins"] += amount
+    return True
 
 
 def xp_needed(level: int) -> int:
@@ -162,7 +145,6 @@ async def reply_error(interaction: discord.Interaction, text: str):
 
 
 async def apply_level_roles(member: discord.Member, level: int):
-    # safe default: no extra role manager in this trimmed build
     return None
 
 
@@ -187,9 +169,8 @@ async def on_message(message: discord.Message):
     new_xp = old_xp + gain
     new_level = level_from_xp(new_xp)[0]
 
-    # Persist XP once and only award the level-up bonus on actual threshold crossing.
-    _db.execute("UPDATE users SET xp = xp + ?, last_msg = ? WHERE guild_id=? AND user_id=?", (gain, now, guild_id, user_id))
-    _db.commit()
+    row["xp"] += gain
+    row["last_msg"] = now
 
     if new_level > old_level:
         reward = new_level * 50
@@ -200,21 +181,13 @@ async def on_message(message: discord.Message):
             pass
 
 
-# Safe economy/game commands only; no gambling or betting features
-
 def setup(bot: discord.Client, tree: app_commands.CommandTree):
     def slash(name: str, description: str):
-        if name in _commands:
-            raise RuntimeError(f"Duplicate slash command name registered: {name}")
         def deco(fn):
             fn = app_commands.guild_only()(fn)
             cmd = tree.command(name=name, description=description)(fn)
-            _commands[name] = cmd
             return cmd
         return deco
-
-    def item_choices(only: Optional[list] = None):
-        return [app_commands.Choice(name=f"{v['emoji']} {v['name']}", value=k) for k, v in SHOP.items() if only is None or k in only]
 
     @slash("balance", "Check your coin balance")
     @app_commands.describe(member="Whose balance to view (leave empty for yourself)")
@@ -232,14 +205,22 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
 
     @slash("disablelevelsystem", "Disable chat XP / leveling for the bot")
     async def disablelevelsystem(interaction: discord.Interaction):
-        if not (interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318} or interaction.user == interaction.guild.owner or interaction.user.guild_permissions.administrator):
+        if not (
+            interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318}
+            or interaction.user == interaction.guild.owner
+            or interaction.user.guild_permissions.administrator
+        ):
             return await reply_error(interaction, "❌ You do not have permission to disable the level system.")
         set_level_system_enabled(False)
         await interaction.response.send_message("✅ The level system has been disabled.")
 
     @slash("enablelevelsystem", "Enable chat XP / leveling for the bot")
     async def enablelevelsystem(interaction: discord.Interaction):
-        if not (interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318} or interaction.user == interaction.guild.owner or interaction.user.guild_permissions.administrator):
+        if not (
+            interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318}
+            or interaction.user == interaction.guild.owner
+            or interaction.user.guild_permissions.administrator
+        ):
             return await reply_error(interaction, "❌ You do not have permission to enable the level system.")
         set_level_system_enabled(True)
         await interaction.response.send_message("✅ The level system has been enabled.")
@@ -329,7 +310,7 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
         row = get_user(interaction.guild.id, target.id)
         level, into = level_from_xp(row["xp"])
         need = xp_needed(level)
-        position = _db.execute("SELECT COUNT(*)+1 AS p FROM users WHERE guild_id=? AND xp>?", (interaction.guild.id, row["xp"])).fetchone()["p"]
+        position = sum(1 for user in _USERS.values() if user["guild_id"] == interaction.guild.id and user["xp"] > row["xp"]) + 1
         embed = discord.Embed(title=f"{target.display_name}'s rank", color=target.color if target.color.value else discord.Color.blurple())
         embed.add_field(name="Level", value=str(level))
         embed.add_field(name="Server rank", value=f"#{position}")
@@ -345,11 +326,22 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
     async def leaderboard(interaction: discord.Interaction, kind: Optional[app_commands.Choice[str]] = None):
         mode = kind.value if kind else "coins"
         if mode == "xp":
-            rows = _db.execute("SELECT user_id, xp AS score FROM users WHERE guild_id=? AND xp>0 ORDER BY xp DESC LIMIT 10", (interaction.guild.id,)).fetchall()
+            rows = [
+                {"user_id": user["user_id"], "score": user["xp"]}
+                for user in _USERS.values()
+                if user["guild_id"] == interaction.guild.id and user["xp"] > 0
+            ]
+            rows.sort(key=lambda item: item["score"], reverse=True)
             title = "🏆 Level leaderboard"
         else:
-            rows = _db.execute("SELECT user_id, coins+bank AS score FROM users WHERE guild_id=? AND coins+bank>0 ORDER BY score DESC LIMIT 10", (interaction.guild.id,)).fetchall()
+            rows = [
+                {"user_id": user["user_id"], "score": user["coins"] + user["bank"]}
+                for user in _USERS.values()
+                if user["guild_id"] == interaction.guild.id and (user["coins"] + user["bank"]) > 0
+            ]
+            rows.sort(key=lambda item: item["score"], reverse=True)
             title = "💰 Richest members"
+        rows = rows[:10]
         if not rows:
             return await reply_error(interaction, "Nobody is on the leaderboard yet.")
         lines = []
@@ -381,7 +373,10 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
     @app_commands.describe(member="Whose inventory to view (leave empty for yourself)")
     async def inventory(interaction: discord.Interaction, member: Optional[discord.Member] = None):
         target = member or interaction.user
-        rows = _db.execute("SELECT item, qty FROM inventory WHERE guild_id=? AND user_id=? AND qty>0", (interaction.guild.id, target.id)).fetchall()
+        rows = []
+        for (guild_id, user_id, item_name), qty in _INVENTORY.items():
+            if guild_id == interaction.guild.id and user_id == target.id and qty > 0:
+                rows.append({"item": item_name, "qty": qty})
         if not rows:
             return await interaction.response.send_message(f"{target.display_name} owns nothing yet. Try `/shop`!")
         lines = [f"{SHOP[r['item']]['emoji']} **{SHOP[r['item']]['name']}** x{r['qty']}" for r in rows if r["item"] in SHOP]
@@ -578,11 +573,11 @@ def _wallet(message: discord.Message) -> int:
 
 
 async def handle_prefix(message: discord.Message, command: str, args: list, privileged: bool = False) -> bool:
-    if message.guild is None or not _commands:
+    if message.guild is None:
         return False
     command = command.lower()
     command = _ALIASES.get(command, command)
-    if command not in _commands:
+    if command not in {"balance", "rank", "inventory", "ship", "choose", "leaderboard", "shop", "daily", "work", "cat", "dog", "meme", "joke", "fact", "disablelevelsystem", "enablelevelsystem", "pay", "deposit", "withdraw", "buy", "use"}:
         return False
 
     if command in {"disablelevelsystem", "enablelevelsystem"} and not (privileged or message.author.guild_permissions.manage_guild):
@@ -597,24 +592,24 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
                 target = message.guild.get_member(int(target_id)) if target_id.isdigit() else None
                 if target is None:
                     raise ValueError("Member not found")
-                return await _commands[command].callback(PrefixContext(message), member=target)
-            return await _commands[command].callback(PrefixContext(message))
+                return await setup.__globals__["balance"].callback(PrefixContext(message), member=target)
+            return await setup.__globals__["balance"].callback(PrefixContext(message))
         if command == "rank":
             if args:
                 target_id = args[0].strip("<@!>")
                 target = message.guild.get_member(int(target_id)) if target_id.isdigit() else None
                 if target is None:
                     raise ValueError("Member not found")
-                return await _commands[command].callback(PrefixContext(message), member=target)
-            return await _commands[command].callback(PrefixContext(message))
+                return await setup.__globals__["rank"].callback(PrefixContext(message), member=target)
+            return await setup.__globals__["rank"].callback(PrefixContext(message))
         if command == "inventory":
             if args:
                 target_id = args[0].strip("<@!>")
                 target = message.guild.get_member(int(target_id)) if target_id.isdigit() else None
                 if target is None:
                     raise ValueError("Member not found")
-                return await _commands[command].callback(PrefixContext(message), member=target)
-            return await _commands[command].callback(PrefixContext(message))
+                return await setup.__globals__["inventory"].callback(PrefixContext(message), member=target)
+            return await setup.__globals__["inventory"].callback(PrefixContext(message))
         if command == "ship":
             if len(args) < 1:
                 raise ValueError("Usage: !v ship @member [@member]")
@@ -625,47 +620,46 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
                 second = message.guild.get_member(int(second_id)) if second_id.isdigit() else None
             if not first:
                 raise ValueError("Member not found")
-            return await _commands[command].callback(PrefixContext(message), first=first, second=second)
+            return await setup.__globals__["ship"].callback(PrefixContext(message), first=first, second=second)
         if command == "choose":
-            return await _commands[command].callback(PrefixContext(message), options=" ".join(args))
+            return await setup.__globals__["choose"].callback(PrefixContext(message), options=" ".join(args))
         if command == "leaderboard":
             if args:
                 mode = args[0].strip().lower()
                 if mode in {"xp", "level", "levels"}:
-                    return await _commands[command].callback(
+                    return await setup.__globals__["leaderboard"].callback(
                         PrefixContext(message),
                         kind=app_commands.Choice(name="Level / XP", value="xp"),
                     )
                 if mode in {"coins", "money", "worth", "net"}:
-                    return await _commands[command].callback(
+                    return await setup.__globals__["leaderboard"].callback(
                         PrefixContext(message),
                         kind=app_commands.Choice(name="Net worth", value="coins"),
                     )
-            return await _commands[command].callback(PrefixContext(message))
+            return await setup.__globals__["leaderboard"].callback(PrefixContext(message))
         if command in {"shop", "daily", "work", "cat", "dog", "meme", "joke", "fact", "disablelevelsystem", "enablelevelsystem"}:
-            return await _commands[command].callback(PrefixContext(message))
+            return await setup.__globals__[command].callback(PrefixContext(message))
         if command == "pay":
             if len(args) < 2:
                 raise ValueError("Usage: !v pay @member <amount>")
             target = message.guild.get_member(int(args[0].strip("<@!>"))) if args[0].strip("<@!>").isdigit() else None
             if not target:
                 raise ValueError("Member not found")
-            return await _commands[command].callback(PrefixContext(message), member=target, amount=int(args[1]))
+            return await setup.__globals__["pay"].callback(PrefixContext(message), member=target, amount=int(args[1]))
         if command in {"deposit", "withdraw"}:
             if not args:
                 raise ValueError(f"Usage: !v {command} <amount|half|all>")
-            return await _commands[command].callback(PrefixContext(message), amount=args[0])
+            return await setup.__globals__[command].callback(PrefixContext(message), amount=args[0])
         if command in {"buy", "use"}:
             if not args:
                 raise ValueError(f"Usage: !v {command} <item>")
-            return await _commands[command].callback(PrefixContext(message), item=app_commands.Choice(name=args[0], value=args[0]), quantity=1)
+            return await setup.__globals__[command].callback(PrefixContext(message), item=app_commands.Choice(name=args[0], value=args[0]), quantity=1)
         raise ValueError(f"Unsupported prefix command: {command}")
     except Exception as exc:
         await message.channel.send(f"❌ {exc}")
         return True
 
 
-# simple default function for compatibility with `main (1).py`
 async def handle_prefix_command(message: discord.Message, command: str, args: list) -> None:
     await handle_prefix(message, command, args)
 
