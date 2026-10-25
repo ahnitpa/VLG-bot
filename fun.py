@@ -626,7 +626,21 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
             return await _commands[command].callback(PrefixContext(message), first=first, second=second)
         if command == "choose":
             return await _commands[command].callback(PrefixContext(message), options=" ".join(args))
-        if command in {"shop", "daily", "work", "leaderboard", "cat", "dog", "meme", "joke", "fact", "disablelevelsystem", "enablelevelsystem"}:
+        if command == "leaderboard":
+            if args:
+                mode = args[0].strip().lower()
+                if mode in {"xp", "level", "levels"}:
+                    return await _commands[command].callback(
+                        PrefixContext(message),
+                        kind=app_commands.Choice(name="Level / XP", value="xp"),
+                    )
+                if mode in {"coins", "money", "worth", "net"}:
+                    return await _commands[command].callback(
+                        PrefixContext(message),
+                        kind=app_commands.Choice(name="Net worth", value="coins"),
+                    )
+            return await _commands[command].callback(PrefixContext(message))
+        if command in {"shop", "daily", "work", "cat", "dog", "meme", "joke", "fact", "disablelevelsystem", "enablelevelsystem"}:
             return await _commands[command].callback(PrefixContext(message))
         if command == "pay":
             if len(args) < 2:
