@@ -1,401 +1,33 @@
-import os
 import random
-import time
 from typing import Optional
 
 import discord
 from discord import app_commands
 
-COIN = "🪙"
+# No SQLite or persistence layer remains here.
+# All commands in this module are non-economic and ephemeral-only.
 
-# Global toggle for chat XP/level progression.
-# Set env var LEVEL_SYSTEM_ENABLED=false or LEVEL_SYSTEM_ENABLED=0 to disable globally.
-LEVEL_SYSTEM_ENABLED = os.environ.get("LEVEL_SYSTEM_ENABLED", "true").strip().lower() not in {"0", "false", "off", "no", "disabled"}
+_COMMANDS = {}
 
-# Ephemeral runtime storage only: values reset on redeploy and are not persisted to disk.
-_USERS = {}
-_INVENTORY = {}
-
-SHOP = {
-    "xp_boost": {"name": "XP Boost", "emoji": "⚡", "price": 1500, "desc": "Double chat XP for one hour."},
-    "mystery_box": {"name": "Mystery Box", "emoji": "🎁", "price": 400, "desc": "Win a safe bonus prize from 100 to 2500 coins."},
-}
-
-DAILY_COOLDOWN = 86400
-WORK_COOLDOWN = 3600
-XP_COOLDOWN = 60
-
-
-def get_user(guild_id: int, user_id: int) -> dict:
-    key = (guild_id, user_id)
-    user = _USERS.get(key)
-    if user is None:
-        user = {
-            "guild_id": guild_id,
-            "user_id": user_id,
-            "coins": 0,
-            "bank": 0,
-            "xp": 0,
-            "last_daily": 0,
-            "daily_streak": 0,
-            "last_work": 0,
-            "last_msg": 0,
-            "boost_until": 0,
-        }
-        _USERS[key] = user
-    return user
-
-
-def add_coins(guild_id: int, user_id: int, amount: int):
-    user = get_user(guild_id, user_id)
-    user["coins"] = max(0, user["coins"] + amount)
-
-
-def take_coins(guild_id: int, user_id: int, amount: int) -> bool:
-    if amount <= 0:
-        return False
-    user = get_user(guild_id, user_id)
-    if user["coins"] < amount:
-        return False
-    user["coins"] -= amount
-    return True
-
-
-def set_field(guild_id: int, user_id: int, **fields):
-    user = get_user(guild_id, user_id)
-    for key, value in fields.items():
-        user[key] = value
-
-
-def inv_add(guild_id: int, user_id: int, item: str, qty: int = 1):
-    key = (guild_id, user_id, item)
-    _INVENTORY[key] = _INVENTORY.get(key, 0) + qty
-
-
-def inv_take(guild_id: int, user_id: int, item: str, qty: int = 1) -> bool:
-    key = (guild_id, user_id, item)
-    current = _INVENTORY.get(key, 0)
-    if current < qty:
-        return False
-    remaining = current - qty
-    if remaining <= 0:
-        _INVENTORY.pop(key, None)
-    else:
-        _INVENTORY[key] = remaining
-    return True
-
-
-def move_money(guild_id: int, user_id: int, amount: int, to_bank: bool) -> bool:
-    user = get_user(guild_id, user_id)
-    if to_bank:
-        if user["coins"] < amount:
-            return False
-        user["coins"] -= amount
-        user["bank"] += amount
-        return True
-    if user["bank"] < amount:
-        return False
-    user["bank"] -= amount
-    user["coins"] += amount
-    return True
-
-
-def xp_needed(level: int) -> int:
-    return 5 * level ** 2 + 50 * level + 100
-
-
-def level_from_xp(total_xp: int):
-    level = 0
-    while total_xp >= xp_needed(level):
-        total_xp -= xp_needed(level)
-        level += 1
-    return level, total_xp
-
-
-def is_level_system_enabled() -> bool:
-    return LEVEL_SYSTEM_ENABLED
-
-
-def set_level_system_enabled(enabled: bool):
-    global LEVEL_SYSTEM_ENABLED
-    LEVEL_SYSTEM_ENABLED = bool(enabled)
-
-
-def progress_bar(current: int, total: int, width: int = 12) -> str:
-    filled = int(width * current / total) if total else 0
-    return "█" * filled + "░" * (width - filled)
-
-
-def fmt_duration(seconds: float) -> str:
-    seconds = max(0, int(seconds))
-    h, rem = divmod(seconds, 3600)
-    m, s = divmod(rem, 60)
-    parts = []
-    if h:
-        parts.append(f"{h}h")
-    if m:
-        parts.append(f"{m}m")
-    if s or not parts:
-        parts.append(f"{s}s")
-    return " ".join(parts)
-
-
-async def reply_error(interaction: discord.Interaction, text: str):
-    await interaction.response.send_message(text, ephemeral=True)
-
-
-async def apply_level_roles(member: discord.Member, level: int):
-    return None
-
-
-async def on_message(message: discord.Message):
-    if message.author.bot or message.guild is None:
-        return
-    if not is_level_system_enabled():
-        return
-
-    guild_id, user_id = message.guild.id, message.author.id
-    row = get_user(guild_id, user_id)
-    now = time.time()
-    if now - row["last_msg"] < XP_COOLDOWN:
-        return
-
-    old_xp = int(row["xp"])
-    gain = random.randint(15, 25)
-    if row["boost_until"] > now:
-        gain *= 2
-
-    old_level = level_from_xp(old_xp)[0]
-    new_xp = old_xp + gain
-    new_level = level_from_xp(new_xp)[0]
-
-    row["xp"] += gain
-    row["last_msg"] = now
-
-    if new_level > old_level:
-        reward = new_level * 50
-        add_coins(guild_id, user_id, reward)
-        try:
-            await message.channel.send(f"🎉 {message.author.mention} reached **level {new_level}**! (+{reward:,} {COIN})")
-        except discord.HTTPException:
-            pass
+PREFIX_HELP = (
+    "**🎮 Fun & utility (`!v`)**\n"
+    "**Random:** `cat`, `dog`, `meme`, `joke`, `fact`, `ship @a [@b]`, `choose a, b, c`\n"
+    "**Info:** `help`"
+)
 
 
 def setup(bot: discord.Client, tree: app_commands.CommandTree):
     def slash(name: str, description: str):
+        if name in _COMMANDS:
+            raise RuntimeError(f"Duplicate slash command name registered: {name}")
+
         def deco(fn):
             fn = app_commands.guild_only()(fn)
             cmd = tree.command(name=name, description=description)(fn)
+            _COMMANDS[name] = cmd
             return cmd
+
         return deco
-
-    @slash("balance", "Check your coin balance")
-    @app_commands.describe(member="Whose balance to view (leave empty for yourself)")
-    async def balance(interaction: discord.Interaction, member: Optional[discord.Member] = None):
-        target = member or interaction.user
-        row = get_user(interaction.guild.id, target.id)
-        level, _ = level_from_xp(row["xp"])
-        embed = discord.Embed(title=f"{target.display_name}'s balance", color=discord.Color.gold())
-        embed.set_thumbnail(url=target.display_avatar.url)
-        embed.add_field(name="Wallet", value=f"{COIN} {row['coins']:,}")
-        embed.add_field(name="Bank", value=f"🏦 {row['bank']:,}")
-        embed.add_field(name="Net worth", value=f"💰 {row['coins'] + row['bank']:,}")
-        embed.set_footer(text=f"Level {level}")
-        await interaction.response.send_message(embed=embed)
-
-    @slash("disablelevelsystem", "Disable chat XP / leveling for the bot")
-    async def disablelevelsystem(interaction: discord.Interaction):
-        if not (
-            interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318}
-            or interaction.user == interaction.guild.owner
-            or interaction.user.guild_permissions.administrator
-        ):
-            return await reply_error(interaction, "❌ You do not have permission to disable the level system.")
-        set_level_system_enabled(False)
-        await interaction.response.send_message("✅ The level system has been disabled.")
-
-    @slash("enablelevelsystem", "Enable chat XP / leveling for the bot")
-    async def enablelevelsystem(interaction: discord.Interaction):
-        if not (
-            interaction.user.id in {1151184036681752576, 1373999565312888842, 1325908309534048318}
-            or interaction.user == interaction.guild.owner
-            or interaction.user.guild_permissions.administrator
-        ):
-            return await reply_error(interaction, "❌ You do not have permission to enable the level system.")
-        set_level_system_enabled(True)
-        await interaction.response.send_message("✅ The level system has been enabled.")
-
-    @slash("daily", "Claim your daily reward")
-    async def daily(interaction: discord.Interaction):
-        gid, uid = interaction.guild.id, interaction.user.id
-        row = get_user(gid, uid)
-        now = time.time()
-        last_daily = float(row["last_daily"])
-        streak = int(row["daily_streak"])
-        elapsed = now - last_daily if last_daily else 0
-
-        if last_daily and elapsed < DAILY_COOLDOWN:
-            return await reply_error(interaction, f"⏳ Already claimed today. Back in **{fmt_duration(DAILY_COOLDOWN - elapsed)}**.")
-
-        if last_daily and 0 < elapsed <= DAILY_COOLDOWN * 2:
-            streak += 1
-        else:
-            streak = 1
-
-        reward = 200 + min(streak, 30) * 25
-        add_coins(gid, uid, reward)
-        set_field(gid, uid, last_daily=now, daily_streak=streak)
-        await interaction.response.send_message(f"📅 Claimed **{reward:,}** {COIN}. Streak: **{streak}** 🔥")
-
-    @slash("work", "Do a job for coins")
-    async def work(interaction: discord.Interaction):
-        gid, uid = interaction.guild.id, interaction.user.id
-        row = get_user(gid, uid)
-        now = time.time()
-        elapsed = now - row["last_work"]
-        if elapsed < WORK_COOLDOWN:
-            return await reply_error(interaction, f"⏳ Try again in **{fmt_duration(WORK_COOLDOWN - elapsed)}**.")
-        amount = random.randint(50, 250)
-        add_coins(gid, uid, amount)
-        set_field(gid, uid, last_work=now)
-        await interaction.response.send_message(f"💼 You worked hard and earned **{amount:,}** {COIN}!")
-
-    @slash("pay", "Send coins to another member")
-    @app_commands.describe(member="Who gets the coins", amount="How many coins to send")
-    async def pay(interaction: discord.Interaction, member: discord.Member, amount: app_commands.Range[int, 1]):
-        if member.bot or member.id == interaction.user.id:
-            return await reply_error(interaction, "❌ Pick another non-bot member.")
-        gid = interaction.guild.id
-        if not take_coins(gid, interaction.user.id, amount):
-            return await reply_error(interaction, "❌ Not enough coins in your wallet.")
-        add_coins(gid, member.id, amount)
-        await interaction.response.send_message(f"💸 {interaction.user.mention} sent **{amount:,}** {COIN} to {member.mention}!")
-
-    @slash("deposit", "Move coins to your bank")
-    @app_commands.describe(amount="A number, 'half' or 'all'")
-    async def deposit(interaction: discord.Interaction, amount: str):
-        gid, uid = interaction.guild.id, interaction.user.id
-        wallet = get_user(gid, uid)["coins"]
-        t = amount.strip().lower().replace(",", "")
-        if t in ("all", "max"):
-            n = wallet if wallet > 0 else None
-        elif t == "half":
-            n = wallet // 2 or None
-        else:
-            n = int(t) if t.isdigit() and int(t) > 0 else None
-        if n is None or not move_money(gid, uid, n, to_bank=True):
-            return await reply_error(interaction, "❌ Invalid amount or not enough coins.")
-        await interaction.response.send_message(f"🏦 Deposited **{n:,}** {COIN}.")
-
-    @slash("withdraw", "Take coins from your bank")
-    @app_commands.describe(amount="A number, 'half' or 'all'")
-    async def withdraw(interaction: discord.Interaction, amount: str):
-        gid, uid = interaction.guild.id, interaction.user.id
-        bank = get_user(gid, uid)["bank"]
-        t = amount.strip().lower().replace(",", "")
-        if t in ("all", "max"):
-            n = bank if bank > 0 else None
-        elif t == "half":
-            n = bank // 2 or None
-        else:
-            n = int(t) if t.isdigit() and int(t) > 0 else None
-        if n is None or not move_money(gid, uid, n, to_bank=False):
-            return await reply_error(interaction, "❌ Invalid amount or not enough coins in your bank.")
-        await interaction.response.send_message(f"💵 Withdrew **{n:,}** {COIN}.")
-
-    @slash("rank", "Show your level progress")
-    @app_commands.describe(member="Whose rank to view (leave empty for yourself)")
-    async def rank(interaction: discord.Interaction, member: Optional[discord.Member] = None):
-        target = member or interaction.user
-        row = get_user(interaction.guild.id, target.id)
-        level, into = level_from_xp(row["xp"])
-        need = xp_needed(level)
-        position = sum(1 for user in _USERS.values() if user["guild_id"] == interaction.guild.id and user["xp"] > row["xp"]) + 1
-        embed = discord.Embed(title=f"{target.display_name}'s rank", color=target.color if target.color.value else discord.Color.blurple())
-        embed.add_field(name="Level", value=str(level))
-        embed.add_field(name="Server rank", value=f"#{position}")
-        embed.add_field(name="Total XP", value=f"{row['xp']:,}")
-        embed.add_field(name="Progress", value=f"`{progress_bar(into, need)}` {into:,}/{need:,} XP", inline=False)
-        if row["boost_until"] > time.time():
-            embed.set_footer(text=f"⚡ 2x XP boost active for {fmt_duration(row['boost_until'] - time.time())}")
-        await interaction.response.send_message(embed=embed)
-
-    @slash("leaderboard", "See the richest or highest-level members")
-    @app_commands.describe(kind="What to rank by")
-    @app_commands.choices(kind=[app_commands.Choice(name="Net worth", value="coins"), app_commands.Choice(name="Level / XP", value="xp")])
-    async def leaderboard(interaction: discord.Interaction, kind: Optional[app_commands.Choice[str]] = None):
-        mode = kind.value if kind else "coins"
-        if mode == "xp":
-            rows = [
-                {"user_id": user["user_id"], "score": user["xp"]}
-                for user in _USERS.values()
-                if user["guild_id"] == interaction.guild.id and user["xp"] > 0
-            ]
-            rows.sort(key=lambda item: item["score"], reverse=True)
-            title = "🏆 Level leaderboard"
-        else:
-            rows = [
-                {"user_id": user["user_id"], "score": user["coins"] + user["bank"]}
-                for user in _USERS.values()
-                if user["guild_id"] == interaction.guild.id and (user["coins"] + user["bank"]) > 0
-            ]
-            rows.sort(key=lambda item: item["score"], reverse=True)
-            title = "💰 Richest members"
-        rows = rows[:10]
-        if not rows:
-            return await reply_error(interaction, "Nobody is on the leaderboard yet.")
-        lines = []
-        for i, r in enumerate(rows):
-            prefix = ["🥇", "🥈", "🥉"][i] if i < 3 else f"`{i + 1}.`"
-            value = f"Level {level_from_xp(r['score'])[0]} ({r['score']:,} XP)" if mode == "xp" else f"{COIN} {r['score']:,}"
-            lines.append(f"{prefix} <@{r['user_id']}> - {value}")
-        await interaction.response.send_message(embed=discord.Embed(title=title, description="\n".join(lines), color=discord.Color.gold()))
-
-    @slash("shop", "Browse safe items you can buy")
-    async def shop(interaction: discord.Interaction):
-        embed = discord.Embed(title="🛒 Shop", description="Buy with `/buy`.", color=discord.Color.blurple())
-        for key, item in SHOP.items():
-            embed.add_field(name=f"{item['emoji']} {item['name']} - {item['price']:,} {COIN}", value=item["desc"], inline=False)
-        await interaction.response.send_message(embed=embed)
-
-    @slash("buy", "Buy an item from the shop")
-    @app_commands.describe(item="What to buy", quantity="How many (default 1)")
-    @app_commands.choices(item=[app_commands.Choice(name=f"{v['emoji']} {v['name']}", value=k) for k, v in SHOP.items()])
-    async def buy(interaction: discord.Interaction, item: app_commands.Choice[str], quantity: app_commands.Range[int, 1, 20] = 1):
-        info = SHOP[item.value]
-        cost = info["price"] * quantity
-        if not take_coins(interaction.guild.id, interaction.user.id, cost):
-            return await reply_error(interaction, f"❌ You need **{cost:,}** {COIN}.")
-        inv_add(interaction.guild.id, interaction.user.id, item.value, quantity)
-        await interaction.response.send_message(f"✅ Bought **{quantity}x {info['emoji']} {info['name']}** for **{cost:,}** {COIN}.")
-
-    @slash("inventory", "See your items")
-    @app_commands.describe(member="Whose inventory to view (leave empty for yourself)")
-    async def inventory(interaction: discord.Interaction, member: Optional[discord.Member] = None):
-        target = member or interaction.user
-        rows = []
-        for (guild_id, user_id, item_name), qty in _INVENTORY.items():
-            if guild_id == interaction.guild.id and user_id == target.id and qty > 0:
-                rows.append({"item": item_name, "qty": qty})
-        if not rows:
-            return await interaction.response.send_message(f"{target.display_name} owns nothing yet. Try `/shop`!")
-        lines = [f"{SHOP[r['item']]['emoji']} **{SHOP[r['item']]['name']}** x{r['qty']}" for r in rows if r["item"] in SHOP]
-        await interaction.response.send_message(embed=discord.Embed(title=f"🎒 {target.display_name}'s inventory", description="\n".join(lines), color=discord.Color.blurple()))
-
-    @slash("use", "Use a shop item")
-    @app_commands.describe(item="The item to use")
-    @app_commands.choices(item=[app_commands.Choice(name=f"{v['emoji']} {v['name']}", value=k) for k, v in SHOP.items()])
-    async def use(interaction: discord.Interaction, item: app_commands.Choice[str]):
-        gid, uid = interaction.guild.id, interaction.user.id
-        if not inv_take(gid, uid, item.value):
-            return await reply_error(interaction, "❌ You don't own that item.")
-        if item.value == "xp_boost":
-            start = max(time.time(), get_user(gid, uid)["boost_until"])
-            set_field(gid, uid, boost_until=start + 3600)
-            return await interaction.response.send_message("⚡ **XP Boost activated!** You earn double chat XP for the next hour.")
-        prize = random.choices([100, 200, 300, 500, 1000, 2500], weights=[30, 25, 20, 13, 9, 3])[0]
-        add_coins(gid, uid, prize)
-        await interaction.response.send_message(f"🎁 You opened the Mystery Box and found **{prize:,}** {COIN}!")
 
     @slash("cat", "Get a random cat picture")
     async def cat(interaction: discord.Interaction):
@@ -493,7 +125,11 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
             verdict = "Soulmates! 💘"
         n1, n2 = first.display_name, other.display_name
         ship_name = n1[:max(1, len(n1) // 2)] + n2[len(n2) // 2:]
-        embed = discord.Embed(title=f"💞 {n1} x {n2}", description=f"**Ship name:** {ship_name}\n`{progress_bar(pct, 100, 20)}` **{pct}%**\n{verdict}", color=discord.Color.magenta())
+        embed = discord.Embed(
+            title=f"💞 {n1} x {n2}",
+            description=f"**Ship name:** {ship_name}\n`{'█' * int(20 * pct / 100) + '░' * (20 - int(20 * pct / 100))}` **{pct}%**\n{verdict}",
+            color=discord.Color.magenta(),
+        )
         await interaction.response.send_message(embed=embed)
 
     @slash("choose", "Let the bot pick between options")
@@ -501,21 +137,8 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
     async def choose(interaction: discord.Interaction, options: str):
         parts = [p.strip() for p in options.replace(" or ", ",").split(",") if p.strip()]
         if len(parts) < 2:
-            return await reply_error(interaction, "❌ Give me at least two options separated by commas.")
+            return await interaction.response.send_message("❌ Give me at least two options separated by commas.", ephemeral=True)
         await interaction.response.send_message(f"🤔 I choose... **{random.choice(parts)}**!", allowed_mentions=discord.AllowedMentions.none())
-
-    global PREFIX_HELP
-    PREFIX_HELP = (
-        "**🎮 Safe economy & fun (`!v`)**\n"
-        "**Economy:** `balance [@m]`, `daily`, `work`, `pay @m <amt>`, `deposit <amt|all>`, `withdraw <amt|all>`\n"
-        "**Levels:** `rank [@m]`, `leaderboard [coins|xp]`, `disablelevelsystem`, `enablelevelsystem`\n"
-        "**Shop:** `shop`, `buy <item> [qty]`, `inventory [@m]`, `use <item>`\n"
-        "**Random:** `cat`, `dog`, `meme`, `joke`, `fact`, `ship @a [@b]`, `choose a, b, c`\n"
-        "Aliases: `bal`, `lb`, `inv`, `lvl`, `level`."
-    )
-
-
-PREFIX_HELP = ""  # gets set in setup()
 
 
 class _PrefixResponse:
@@ -565,52 +188,25 @@ class PrefixContext:
             await self.sent.edit(**kwargs)
 
 
-_ALIASES = {"bal": "balance", "lb": "leaderboard", "top": "leaderboard", "inv": "inventory", "lvl": "rank", "level": "rank"}
+_ALIASES = {"ship": "ship", "choose": "choose", "cat": "cat", "dog": "dog", "meme": "meme", "joke": "joke", "fact": "fact"}
 
 
-def _wallet(message: discord.Message) -> int:
-    return get_user(message.guild.id, message.author.id)["coins"]
+async def on_message(message: discord.Message):
+    # Intentionally left blank: no persistent economy/leveling state.
+    return None
 
 
 async def handle_prefix(message: discord.Message, command: str, args: list, privileged: bool = False) -> bool:
     if message.guild is None:
         return False
-    command = command.lower()
-    command = _ALIASES.get(command, command)
-    if command not in {"balance", "rank", "inventory", "ship", "choose", "leaderboard", "shop", "daily", "work", "cat", "dog", "meme", "joke", "fact", "disablelevelsystem", "enablelevelsystem", "pay", "deposit", "withdraw", "buy", "use"}:
-        return False
 
-    if command in {"disablelevelsystem", "enablelevelsystem"} and not (privileged or message.author.guild_permissions.manage_guild):
-        await message.channel.send("❌ Access Denied: Manage Server required.")
-        return True
+    cmd = (_ALIASES.get(command.lower(), command.lower()))
+    if cmd not in _COMMANDS:
+        return False
 
     args = list(args)
     try:
-        if command == "balance":
-            if args:
-                target_id = args[0].strip("<@!>")
-                target = message.guild.get_member(int(target_id)) if target_id.isdigit() else None
-                if target is None:
-                    raise ValueError("Member not found")
-                return await setup.__globals__["balance"].callback(PrefixContext(message), member=target)
-            return await setup.__globals__["balance"].callback(PrefixContext(message))
-        if command == "rank":
-            if args:
-                target_id = args[0].strip("<@!>")
-                target = message.guild.get_member(int(target_id)) if target_id.isdigit() else None
-                if target is None:
-                    raise ValueError("Member not found")
-                return await setup.__globals__["rank"].callback(PrefixContext(message), member=target)
-            return await setup.__globals__["rank"].callback(PrefixContext(message))
-        if command == "inventory":
-            if args:
-                target_id = args[0].strip("<@!>")
-                target = message.guild.get_member(int(target_id)) if target_id.isdigit() else None
-                if target is None:
-                    raise ValueError("Member not found")
-                return await setup.__globals__["inventory"].callback(PrefixContext(message), member=target)
-            return await setup.__globals__["inventory"].callback(PrefixContext(message))
-        if command == "ship":
+        if cmd == "ship":
             if len(args) < 1:
                 raise ValueError("Usage: !v ship @member [@member]")
             first = message.guild.get_member(int(args[0].strip("<@!>"))) if args[0].strip("<@!>").isdigit() else None
@@ -620,41 +216,12 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
                 second = message.guild.get_member(int(second_id)) if second_id.isdigit() else None
             if not first:
                 raise ValueError("Member not found")
-            return await setup.__globals__["ship"].callback(PrefixContext(message), first=first, second=second)
-        if command == "choose":
-            return await setup.__globals__["choose"].callback(PrefixContext(message), options=" ".join(args))
-        if command == "leaderboard":
-            if args:
-                mode = args[0].strip().lower()
-                if mode in {"xp", "level", "levels"}:
-                    return await setup.__globals__["leaderboard"].callback(
-                        PrefixContext(message),
-                        kind=app_commands.Choice(name="Level / XP", value="xp"),
-                    )
-                if mode in {"coins", "money", "worth", "net"}:
-                    return await setup.__globals__["leaderboard"].callback(
-                        PrefixContext(message),
-                        kind=app_commands.Choice(name="Net worth", value="coins"),
-                    )
-            return await setup.__globals__["leaderboard"].callback(PrefixContext(message))
-        if command in {"shop", "daily", "work", "cat", "dog", "meme", "joke", "fact", "disablelevelsystem", "enablelevelsystem"}:
-            return await setup.__globals__[command].callback(PrefixContext(message))
-        if command == "pay":
-            if len(args) < 2:
-                raise ValueError("Usage: !v pay @member <amount>")
-            target = message.guild.get_member(int(args[0].strip("<@!>"))) if args[0].strip("<@!>").isdigit() else None
-            if not target:
-                raise ValueError("Member not found")
-            return await setup.__globals__["pay"].callback(PrefixContext(message), member=target, amount=int(args[1]))
-        if command in {"deposit", "withdraw"}:
-            if not args:
-                raise ValueError(f"Usage: !v {command} <amount|half|all>")
-            return await setup.__globals__[command].callback(PrefixContext(message), amount=args[0])
-        if command in {"buy", "use"}:
-            if not args:
-                raise ValueError(f"Usage: !v {command} <item>")
-            return await setup.__globals__[command].callback(PrefixContext(message), item=app_commands.Choice(name=args[0], value=args[0]), quantity=1)
-        raise ValueError(f"Unsupported prefix command: {command}")
+            return await _COMMANDS[cmd].callback(PrefixContext(message), first=first, second=second)
+
+        if cmd == "choose":
+            return await _COMMANDS[cmd].callback(PrefixContext(message), options=" ".join(args))
+
+        return await _COMMANDS[cmd].callback(PrefixContext(message))
     except Exception as exc:
         await message.channel.send(f"❌ {exc}")
         return True
