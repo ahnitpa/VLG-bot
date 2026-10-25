@@ -247,10 +247,18 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree):
         gid, uid = interaction.guild.id, interaction.user.id
         row = get_user(gid, uid)
         now = time.time()
-        elapsed = now - row["last_daily"]
-        if elapsed < DAILY_COOLDOWN:
+        last_daily = float(row["last_daily"])
+        streak = int(row["daily_streak"])
+        elapsed = now - last_daily if last_daily else 0
+
+        if last_daily and elapsed < DAILY_COOLDOWN:
             return await reply_error(interaction, f"⏳ Already claimed today. Back in **{fmt_duration(DAILY_COOLDOWN - elapsed)}**.")
-        streak = row["daily_streak"] + 1 if elapsed < DAILY_COOLDOWN * 2 else 1
+
+        if last_daily and 0 < elapsed <= DAILY_COOLDOWN * 2:
+            streak += 1
+        else:
+            streak = 1
+
         reward = 200 + min(streak, 30) * 25
         add_coins(gid, uid, reward)
         set_field(gid, uid, last_daily=now, daily_streak=streak)
