@@ -6,6 +6,7 @@ from datetime import timedelta
 from threading import Thread
 from typing import Optional
 
+DB_PATH = os.environ.get("DB_PATH", "/data/bot.db")
 import discord
 from discord import app_commands
 from discord.ext import tasks
