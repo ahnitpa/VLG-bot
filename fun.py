@@ -204,6 +204,8 @@ async def on_message(message: discord.Message):
 
 def setup(bot: discord.Client, tree: app_commands.CommandTree):
     def slash(name: str, description: str):
+        if name in _commands:
+            raise RuntimeError(f"Duplicate slash command name registered: {name}")
         def deco(fn):
             fn = app_commands.guild_only()(fn)
             cmd = tree.command(name=name, description=description)(fn)
