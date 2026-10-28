@@ -18,7 +18,7 @@ import music
 # ====================== CONFIG ======================
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1559616784200499291
-LOG_CHANNEL_NAMES = ("mod-logs", "bot-logs", "server-logs")
+LOG_CHANNEL_NAMES = ("bot-logs",)
 
 # ====================== BOT SETUP ======================
 intents = discord.Intents.default()
@@ -48,15 +48,12 @@ from shared import *  # noqa: F401,F403
 
 
 def get_log_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
-    """Find the first configured moderation log channel in the guild."""
+    """Find the configured moderation log channel in the guild."""
     if guild is None:
         return None
 
-    for name in LOG_CHANNEL_NAMES:
-        channel = discord.utils.get(guild.text_channels, name=name)
-        if channel is not None:
-            return channel
-    return None
+    channel = discord.utils.get(guild.text_channels, name="bot-logs")
+    return channel
 
 
 async def send_log_embed(
@@ -142,13 +139,10 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
     # --- PING (LATENCY PERFORMANCE) ---
     if command == "ping":
         start_time = time.time()
-        # Send an initial message to calculate round-trip processing time
         msg = await message.channel.send("Calculating performance spikes...")
         end_time = time.time()
 
-        # API gateway WebSocket latency
         gateway_ping = round(bot.latency * 1000)
-        # Full chat routing process speed
         message_ping = round((end_time - start_time) * 1000)
 
         await msg.edit(content=(
@@ -167,14 +161,11 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         status_msg = await message.channel.send("*Initializing memory array cache purging...*")
 
         try:
-            # 1. Clear internal discord.py user/member message caches safely
             try:
                 bot._connection._messages.clear()
             except Exception:
-                # Accessing private internals may fail on some discord.py versions; ignore safely
                 pass
 
-            # 2. Force Python's core garbage collector to dump unlinked memory states immediately
             import gc
             gc.collect()
 
@@ -182,7 +173,6 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         except Exception as e:
             await status_msg.edit(content=f"❌ **Purge Failed:** Internal fault tracking error: `{e}`")
         return
-
 
     # --- SAY ---
     if command == "say":
@@ -369,7 +359,6 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         if not args:
             return await send(f"❌ **Usage:** `!v {command} <name> [category_id]`")
 
-        # An optional trailing number is treated as the category ID
         category = None
         name_parts = list(args)
         if len(name_parts) > 1 and name_parts[-1].isdigit():
@@ -484,7 +473,6 @@ async def on_message(message: discord.Message):
 
     await afk.handle_message(message)
 
-    # Chat XP / leveling (never lets a leveling error break normal commands)
     try:
         await fun.on_message(message)
     except Exception:
@@ -494,7 +482,6 @@ async def on_message(message: discord.Message):
     is_owner = message.author.id == message.guild.owner_id
     content_lower = message.content.lower()
 
-    # !setup: owner/dev initializes the bot and refreshes slash commands
     if content_lower == "!setup":
         if not (is_dev or is_owner):
             await message.channel.send(
@@ -519,7 +506,6 @@ async def on_message(message: discord.Message):
             await status.edit(content=f"❌ **Setup Failed:** `{e}`")
         return
 
-    # !forcesync: owner/dev manually refreshes slash commands
     if content_lower == "!forcesync":
         if not (is_dev or is_owner):
             await message.channel.send(
@@ -535,7 +521,6 @@ async def on_message(message: discord.Message):
             await status.edit(content=f"❌ **Force-Sync Failed:** `{e}`")
         return
 
-    # !serverlist: developers only
     if content_lower == "!serverlist":
         if not is_dev:
             await message.channel.send("❌ **Access Denied:** Developer eyes only.")
@@ -552,7 +537,6 @@ async def on_message(message: discord.Message):
         await message.channel.send(report)
         return
 
-    # !inactive <voice_channel_id>: 5-minute automated inactivity fallback channel
     if content_lower.startswith("!inactive"):
         if not (is_dev or is_owner):
             await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
@@ -585,9 +569,6 @@ async def on_message(message: discord.Message):
             await message.channel.send(f"❌ **Failed to map channel:** `{e}`")
         return
 
-    # ============================================================
-    # THE !V PREFIX COMMANDS
-    # ============================================================
     if content_lower.startswith("!v "):
         parts = message.content.split()
         if len(parts) >= 2:
@@ -601,16 +582,14 @@ async def on_message(message: discord.Message):
                     pass
         return
 
-    # Reply ONLY when the bot is explicitly @mentioned
     if bot.user in message.mentions and not message.mention_everyone:
-        if f"<{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
+        if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
             try:
                 await message.reply("Hi")
             except discord.HTTPException:
                 pass
             return
 
-    # React to the word "vlg"
     if "vlg" in content_lower:
         try:
             emoji = bot.get_emoji(1559616784200499291)
@@ -622,8 +601,7 @@ async def on_message(message: discord.Message):
 # ====================== MODERATION LOGGING SYSTEM ======================
 @bot.event
 async def on_guild_channel_create(channel: discord.abc.GuildChannel):
-    """Record new text, voice, and category channel creation."""
-    if channel.name in LOG_CHANNEL_NAMES:
+    if channel.name == "bot-logs":
         return
     await send_log_embed(
         channel.guild,
@@ -639,8 +617,7 @@ async def on_guild_channel_create(channel: discord.abc.GuildChannel):
 
 @bot.event
 async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
-    """Record important channel lifecycle events without the old generic warning language."""
-    if channel.name in LOG_CHANNEL_NAMES:
+    if channel.name == "bot-logs":
         return
 
     await send_log_embed(
@@ -657,7 +634,6 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
 
 @bot.event
 async def on_guild_role_delete(role: discord.Role):
-    """Log role deletions for moderation and cleanup tracking."""
     await send_log_embed(
         role.guild,
         title="Role Deleted",
@@ -672,7 +648,6 @@ async def on_guild_role_delete(role: discord.Role):
 
 @bot.event
 async def on_member_join(member: discord.Member):
-    """Log people joining the server."""
     await send_log_embed(
         member.guild,
         title="Member Joined",
@@ -687,7 +662,6 @@ async def on_member_join(member: discord.Member):
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    """Log people leaving the server."""
     await send_log_embed(
         member.guild,
         title="Member Left",
@@ -702,7 +676,6 @@ async def on_member_remove(member: discord.Member):
 
 @bot.event
 async def on_member_ban(guild: discord.Guild, user: discord.User):
-    """Log bans for moderation tracking."""
     await send_log_embed(
         guild,
         title="Member Banned",
@@ -716,7 +689,6 @@ async def on_member_ban(guild: discord.Guild, user: discord.User):
 
 @bot.event
 async def on_member_unban(guild: discord.Guild, user: discord.User):
-    """Log unbans for moderation tracking."""
     await send_log_embed(
         guild,
         title="Member Unbanned",
@@ -730,10 +702,9 @@ async def on_member_unban(guild: discord.Guild, user: discord.User):
 
 @bot.event
 async def on_message_delete(message: discord.Message):
-    """Log deleted messages in normal channels to keep a useful audit trail."""
     if message.author is None or message.author.bot or message.guild is None:
         return
-    if message.channel.name in LOG_CHANNEL_NAMES:
+    if message.channel.name == "bot-logs":
         return
     if not message.content.strip() and not message.attachments:
         return
@@ -754,10 +725,9 @@ async def on_message_delete(message: discord.Message):
 
 @bot.event
 async def on_message_edit(before: discord.Message, after: discord.Message):
-    """Log message edits in normal channels."""
     if before.author.bot or before.guild is None:
         return
-    if before.channel.name in LOG_CHANNEL_NAMES:
+    if before.channel.name == "bot-logs":
         return
     if before.content == after.content:
         return
@@ -836,8 +806,6 @@ async def coinflip(interaction: discord.Interaction):
             )
 
 
-# (`/steal` now lives in fun.py with real coins)
-
 @tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
 @app_commands.describe(thing="The object, person, or idea you want rated")
 async def rate(interaction: discord.Interaction, thing: str):
@@ -899,10 +867,6 @@ async def qna(interaction: discord.Interaction, topic: Optional[str] = None):
 
 
 # ====================== SLASH MODERATION COMMANDS ======================
-# Devs and the server owner always pass. Administrators pass automatically.
-# Everyone else needs the matching Discord permission. Devs and the owner also
-# skip the "equal or higher role" check (the bot's own role must still be high enough).
-
 @tree.command(name="kick", description="Kick a member from the server")
 @app_commands.describe(member="The member to kick", reason="Reason for the kick")
 @dev_or_permissions(kick_members=True)
@@ -1093,7 +1057,6 @@ async def movechannel(
     await interaction.response.defer(ephemeral=True)
 
     try:
-        # Moving 'up' lowers the position number (closer to 0); 'down' raises it
         change = -1 if direction.value == "up" else 1
         await target.edit(position=max(0, target.position + change))
 
