@@ -18,6 +18,7 @@ import music
 # ====================== CONFIG ======================
 ROLE_ID = 1535617025744048268
 CUSTOM_EMOJI_ID = 1559616784200499291
+LOG_CHANNEL_NAMES = ("mod-logs", "bot-logs", "server-logs")
 
 # ====================== BOT SETUP ======================
 intents = discord.Intents.default()
@@ -44,6 +45,53 @@ inactive_config = {}
 
 # Permission helpers, shared content and prefix-parsing helpers live in shared.py
 from shared import *  # noqa: F401,F403
+
+
+def get_log_channel(guild: discord.Guild) -> Optional[discord.TextChannel]:
+    """Find the first configured moderation log channel in the guild."""
+    if guild is None:
+        return None
+
+    for name in LOG_CHANNEL_NAMES:
+        channel = discord.utils.get(guild.text_channels, name=name)
+        if channel is not None:
+            return channel
+    return None
+
+
+async def send_log_embed(
+    guild: discord.Guild,
+    *,
+    title: str,
+    description: str = "",
+    color: discord.Colour = discord.Color.blurple(),
+    fields: Optional[list[tuple[str, str, bool]]] = None,
+    footer: Optional[str] = None,
+) -> bool:
+    """Send a rich embed to the server's configured log channel."""
+    if guild is None:
+        return False
+
+    log_channel = get_log_channel(guild)
+    if log_channel is None:
+        return False
+
+    embed = discord.Embed(title=title, description=description or "", color=color)
+    if fields:
+        for name, value, inline in fields:
+            embed.add_field(name=name, value=value, inline=inline)
+    if footer:
+        embed.set_footer(text=footer)
+
+    try:
+        await log_channel.send(embed=embed)
+        return True
+    except discord.Forbidden:
+        print(f"⚠️ Could not send log to {guild.name}: missing permission in #{log_channel.name}")
+        return False
+    except discord.HTTPException as exc:
+        print(f"⚠️ Log delivery failed in {guild.name}: {exc}")
+        return False
 
 
 async def handle_prefix_command(message: discord.Message, command: str, args: list) -> None:
@@ -555,7 +603,7 @@ async def on_message(message: discord.Message):
 
     # Reply ONLY when the bot is explicitly @mentioned
     if bot.user in message.mentions and not message.mention_everyone:
-        if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
+        if f"<{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
             try:
                 await message.reply("Hi")
             except discord.HTTPException:
@@ -571,29 +619,160 @@ async def on_message(message: discord.Message):
             pass
 
 
-# ====================== ADVANCED LOGGING MODULE ======================
+# ====================== MODERATION LOGGING SYSTEM ======================
+@bot.event
+async def on_guild_channel_create(channel: discord.abc.GuildChannel):
+    """Record new text, voice, and category channel creation."""
+    if channel.name in LOG_CHANNEL_NAMES:
+        return
+    await send_log_embed(
+        channel.guild,
+        title="Channel Created",
+        description=f"The channel **{channel.name}** was created.",
+        color=discord.Color.green(),
+        fields=[
+            ("Type", str(channel.type).replace("Channel", " Channel").title(), True),
+            ("Channel ID", f"`{channel.id}`", True),
+        ],
+    )
+
+
 @bot.event
 async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
-    """Logs unusual activity like text, voice, or category channels being deleted."""
-    log_channel = discord.utils.get(channel.guild.text_channels, name="bot-logs")
-    if not log_channel:
+    """Record important channel lifecycle events without the old generic warning language."""
+    if channel.name in LOG_CHANNEL_NAMES:
         return
 
-    # Don't log if the logging channel itself is being deleted
-    if channel.name == "bot-logs":
-        return
-
-    embed = discord.Embed(
-        title="Unusual Activity: Channel Deleted",
-        description=f"The channel/category **{channel.name}** (Type: `{channel.type}`) was deleted from the server.",
-        color=discord.Color.dark_red()
+    await send_log_embed(
+        channel.guild,
+        title="Channel Deleted",
+        description=f"The channel **{channel.name}** was removed from the server.",
+        color=discord.Color.dark_red(),
+        fields=[
+            ("Type", str(channel.type).replace("Channel", " Channel").title(), True),
+            ("Channel ID", f"`{channel.id}`", True),
+        ],
     )
-    embed.add_field(name="Channel ID", value=f"`{channel.id}`", inline=True)
 
-    try:
-        await log_channel.send(embed=embed)
-    except discord.HTTPException:
-        pass
+
+@bot.event
+async def on_guild_role_delete(role: discord.Role):
+    """Log role deletions for moderation and cleanup tracking."""
+    await send_log_embed(
+        role.guild,
+        title="Role Deleted",
+        description=f"The role **{role.name}** was deleted.",
+        color=discord.Color.dark_orange(),
+        fields=[
+            ("Role ID", f"`{role.id}`", True),
+            ("Managed", str(role.managed), True),
+        ],
+    )
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    """Log people joining the server."""
+    await send_log_embed(
+        member.guild,
+        title="Member Joined",
+        description=f"{member.mention} joined the server.",
+        color=discord.Color.green(),
+        fields=[
+            ("User", f"{member} (`{member.id}`)", False),
+            ("Account Created", discord.utils.format_dt(member.created_at, style="F"), False),
+        ],
+    )
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """Log people leaving the server."""
+    await send_log_embed(
+        member.guild,
+        title="Member Left",
+        description=f"{member.mention} left or was removed from the server.",
+        color=discord.Color.orange(),
+        fields=[
+            ("User", f"{member} (`{member.id}`)", False),
+            ("Joined At", discord.utils.format_dt(member.joined_at or member.created_at, style="F"), False),
+        ],
+    )
+
+
+@bot.event
+async def on_member_ban(guild: discord.Guild, user: discord.User):
+    """Log bans for moderation tracking."""
+    await send_log_embed(
+        guild,
+        title="Member Banned",
+        description=f"{user.mention} was banned from the server.",
+        color=discord.Color.dark_red(),
+        fields=[
+            ("User", f"{user} (`{user.id}`)", False),
+        ],
+    )
+
+
+@bot.event
+async def on_member_unban(guild: discord.Guild, user: discord.User):
+    """Log unbans for moderation tracking."""
+    await send_log_embed(
+        guild,
+        title="Member Unbanned",
+        description=f"{user.mention} was unbanned from the server.",
+        color=discord.Color.blurple(),
+        fields=[
+            ("User", f"{user} (`{user.id}`)", False),
+        ],
+    )
+
+
+@bot.event
+async def on_message_delete(message: discord.Message):
+    """Log deleted messages in normal channels to keep a useful audit trail."""
+    if message.author is None or message.author.bot or message.guild is None:
+        return
+    if message.channel.name in LOG_CHANNEL_NAMES:
+        return
+    if not message.content.strip() and not message.attachments:
+        return
+
+    content_preview = message.content[:1000] if message.content else "*(no text content)*"
+    await send_log_embed(
+        message.guild,
+        title="Message Deleted",
+        description=f"A message was deleted in {message.channel.mention}.",
+        color=discord.Color.dark_red(),
+        fields=[
+            ("Author", f"{message.author} (`{message.author.id}`)", False),
+            ("Channel", f"{message.channel.mention} (`{message.channel.id}`)", False),
+            ("Content", content_preview, False),
+        ],
+    )
+
+
+@bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message):
+    """Log message edits in normal channels."""
+    if before.author.bot or before.guild is None:
+        return
+    if before.channel.name in LOG_CHANNEL_NAMES:
+        return
+    if before.content == after.content:
+        return
+
+    await send_log_embed(
+        before.guild,
+        title="Message Edited",
+        description=f"A message was edited in {before.channel.mention}.",
+        color=discord.Color.gold(),
+        fields=[
+            ("Author", f"{before.author} (`{before.author.id}`)", False),
+            ("Before", before.content[:1000] if before.content else "*(empty)*", False),
+            ("After", after.content[:1000] if after.content else "*(empty)*", False),
+        ],
+    )
 
 
 # ====================== SLASH ERROR HANDLER ======================
