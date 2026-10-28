@@ -11,6 +11,7 @@ from discord import app_commands
 from discord.ext import tasks
 from flask import Flask
 
+import afk
 import fun
 import music
 
@@ -33,6 +34,9 @@ music.setup(bot, tree)
 
 # Registers the economy / leveling / games / fun commands (slash + `!v` prefix)
 fun.setup(bot, tree)
+
+# Registers the AFK system (slash + `!v` prefix)
+afk.setup(bot, tree)
 
 # Global configuration variable trackers
 synced_once = False
@@ -63,9 +67,19 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
 
     # --- HELP ---
     if command == "help":
-        await send(PREFIX_HELP)
+        await send(build_prefix_help())
         await send(fun.PREFIX_HELP)
         return
+
+    # --- AFK ---
+    if command == "afk":
+        reason = " ".join(args) if args else "AFK"
+        if author.id in afk.AFK_USERS:
+            return await send("❌ **You are already marked as AFK.**")
+        return await send(await afk.prefix_afk(message, reason))
+
+    if command == "afklist":
+        return await send(embed=await afk.prefix_afklist())
 
     # --- SET STATUS ---
     if command == "setstatus":
@@ -419,6 +433,8 @@ async def on_ready():
 async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
+
+    await afk.handle_message(message)
 
     # Chat XP / leveling (never lets a leveling error break normal commands)
     try:
