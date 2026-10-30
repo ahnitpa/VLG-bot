@@ -204,8 +204,6 @@ class MusicManager:
         if getattr(tree, "_vlg_music_setup", False):
             return
         tree._vlg_music_setup = True
-        registered_names = set(getattr(tree, "_vlg_registered_command_names", set()))
-        tree._vlg_registered_command_names = registered_names
 
         @tree.command(name="join", description="Join your voice channel")
         async def join(interaction: discord.Interaction):
@@ -389,12 +387,6 @@ class MusicManager:
             player.queue.appendleft(player.current)
             self.do_skip(vc, player)
             await interaction.response.send_message(f"🔄 Replaying **{player.current.title}**")
-
-        for command in (join, leave, play, pause, resume, skip, queue_cmd, nowplaying, volume, shuffle, loop_cmd, remove, clear, replay):
-            if command.name in registered_names:
-                continue
-            tree.add_command(command)
-            registered_names.add(command.name)
 
 
 def create_music_manager(bot: discord.Client) -> MusicManager:
