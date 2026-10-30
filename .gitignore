@@ -1,0 +1,160 @@
+# VLG Bot
+
+A playful Discord bot for community management, moderation, AFK tracking, funny commands, and music playback.
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white" alt="Python 3.11" />
+  <img src="https://img.shields.io/badge/Discord.py-2.x-5865F2?logo=discord&logoColor=white" alt="discord.py" />
+  <img src="https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white" alt="Flask" />
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white" alt="Docker" />
+</p>
+
+## Overview
+
+VLG Bot is a feature-rich community Discord bot with:
+
+- moderation tools
+- AFK detection
+- fun and social commands
+- music playback support
+- slash commands and prefix commands
+- keep-alive web server for hosted environments
+- server automation helpers
+
+## Features
+
+### Moderation
+- kick
+- ban
+- timeout
+- remove timeout
+- role assignment
+- channel creation and movement
+- moderation logging to a configured log channel
+
+### Utility and Community
+- status updates
+- custom commands
+- server setup actions
+- inactivity-aware voice channel behavior
+- bot presence monitoring
+
+### Fun and Engagement
+- coinflip
+- magic 8-ball
+- rating command
+- roast/slap interactions
+- profile and avatar lookups
+- AFK list and tracking
+
+### Music
+- Discord voice playback
+- queue-related bot features
+- support for streaming audio through the bot
+
+## Repository Layout
+
+```text
+.
+├── afk.py
+├── bot.py
+├── Dockerfile
+├── fun.py
+├── fun_core (1).py
+├── fun_games (1).py
+├── main (1).py
+├── music.py
+├── requirements.txt
+├── scripts/
+├── shared.py
+├── shared (1).py
+├── .env.example
+├── .gitignore
+├── .dockerignore
+├── docker-compose.yml
+├── pyproject.toml
+├── README.md
+└── LICENSE (if added later)
+```
+
+## Local Setup
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/ahnitpa/VLG-bot.git
+cd VLG-bot
+```
+
+2. Create a virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+```
+
+3. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+4. Configure environment variables:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set your bot token and runtime values.
+
+5. Run the bot:
+
+```bash
+python bot.py
+```
+
+## Environment Variables
+
+Example values in `.env.example`:
+
+```env
+TOKEN=your_discord_bot_token_here
+PORT=8080
+```
+
+## Docker
+
+Build and run with Docker:
+
+```bash
+docker build -t vlg-bot .
+docker run --env-file .env -p 8080:8080 vlg-bot
+```
+
+Or with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+## Notes
+
+- The bot is currently driven by a set of Python modules and uses environment-based configuration.
+- This project is a strong candidate for future cleanup into a more modular structure with database-backed persistence and a configuration layer.
+- A `TOKEN` environment variable is required to start the bot.
+
+## License
+
+This repository does not currently include a license file. If you plan to distribute or share it publicly, consider adding one such as MIT or GPL.
+
+## Contributing
+
+Pull requests, feature ideas, and cleanup improvements are welcome.
+
+## Maintainer
+
+- ahnitpa
+
+---
+
+Built for fun, community, and Discord automation.

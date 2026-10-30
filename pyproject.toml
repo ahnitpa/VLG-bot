@@ -1,0 +1,23 @@
+[project]
+name = "vlg-bot"
+version = "0.1.0"
+description = "A Discord bot for community management, moderation, music, and fun tools"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "discord.py[voice]",
+  "PyNaCl",
+  "flask",
+  "yt-dlp",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
