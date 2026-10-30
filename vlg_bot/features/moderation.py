@@ -1,3 +1,5 @@
+"""Moderation feature module."""
+
 import datetime
 
 import discord
@@ -19,9 +21,9 @@ class ModerationManager:
         return self.warnings.get(guild_id, {}).get(user_id, [])
 
     def clear_warnings(self, guild_id: int, user_id: int) -> int:
-        values = self.warnings.get(guild_id, {})
-        removed = len(values.pop(user_id, []))
-        if not values:
+        guild_warnings = self.warnings.get(guild_id, {})
+        removed = len(guild_warnings.pop(user_id, []))
+        if not guild_warnings:
             self.warnings.pop(guild_id, None)
         return removed
 
@@ -59,6 +61,10 @@ class ModerationManager:
             await interaction.response.send_message("I don't have permission to ban that member.", ephemeral=True)
 
     def setup(self, tree: app_commands.CommandTree) -> None:
+        if getattr(tree, "_vlg_moderation_setup", False):
+            return
+        tree._vlg_moderation_setup = True
+
         @tree.command(name="warn", description="Warn a member")
         @app_commands.describe(member="Member to warn", reason="Reason for the warning")
         async def warn(interaction: discord.Interaction, member: discord.Member, reason: str):
@@ -142,11 +148,8 @@ class ModerationManager:
             except discord.Forbidden:
                 await interaction.response.send_message("I don't have permission to remove that timeout.", ephemeral=True)
 
-        for command in (warn, warnings, clearwarnings, timeout_cmd, ban_cmd, kick_cmd, removetimeout):
-            tree.add_command(command)
 
-
-def create_moderation_manager(bot: discord.Client) -> ModerationManager:
+def create_moderation_manager(bot: discord.Client) -> "ModerationManager":
     return ModerationManager(bot)
 
 
