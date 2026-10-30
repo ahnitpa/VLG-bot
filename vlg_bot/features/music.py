@@ -201,6 +201,10 @@ class MusicManager:
                 player.auto_paused = False
 
     def setup(self, tree: app_commands.CommandTree) -> None:
+        if getattr(tree, "_vlg_music_setup", False):
+            return
+        tree._vlg_music_setup = True
+
         @tree.command(name="join", description="Join your voice channel")
         async def join(interaction: discord.Interaction):
             if not interaction.user.voice or not interaction.user.voice.channel:
