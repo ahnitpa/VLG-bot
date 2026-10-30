@@ -64,11 +64,15 @@ async def on_message(message: discord.Message):
     content = message.content.strip().lower()
     if content in {"!help", "!v help"}:
         await message.channel.send(
-            "**VLG Bot Commands**\n"
-            "Prefix commands: `!v help`, `!v coinflip`, `!v rate`, `!v 8ball`, `!v slap`, `!v roast`, "
-            "`!v avatar`, `!v whois`, `!v kick`, `!v ban`, `!v timeout`, `!v removetimeout`\n"
-            "Music slash commands: `/play`, `/queue`, `/skip`, `/pause`, `/resume`, `/join`, `/leave`\n"
-            "Moderation slash commands: `/warn`, `/warnings`, `/clearwarnings`, `/timeout`, `/ban`, `/kick`, `/removetimeout`"
+            "📖 !v commands\n"
+            "Fun: `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, `slap @member`, `roast @member`, `qna [food|gaming|life]`\n"
+            "Info: `avatar [@member]`, `whois [@member]`\n"
+            "Moderation: `kick @member [reason]`, `ban @member [reason]`, `timeout @member <minutes> [reason]`, `removetimeout @member`, `addrole @member @role`, `removerole @member @role`\n"
+            "Admin: `setstatus <text>`, `say <text>`, `createcategory <name>`, `createchannel <name> [category_id]`, `createvoice <name> [category_id]`, `movechannel <#channel or id> <up|down>`\n"
+            "Music uses slash commands (`/play`, `/queue`, ...).\n"
+            "🎮 Fun & utility (!v)\n"
+            "Random: `cat`, `dog`, `meme`, `joke`, `fact`, `ship @a [@b]`, `choose a, b, c`\n"
+            "Info: `help`"
         )
 
 
