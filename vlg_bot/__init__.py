@@ -1,3 +1,5 @@
-"""VLG Bot package entry points."""
+"""VLG Bot package exports."""
 
-__all__ = ["bot_app", "config"]
+from .bot_app import bot, main, moderation_manager, music_manager, tree
+
+__all__ = ["main", "bot", "tree", "music_manager", "moderation_manager"]
