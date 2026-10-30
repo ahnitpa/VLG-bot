@@ -60,10 +60,15 @@ async def on_voice_state_update(member: discord.Member, before: discord.VoiceSta
 async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
-    if message.content.strip().lower() == "!help":
+
+    content = message.content.strip().lower()
+    if content in {"!help", "!v help"}:
         await message.channel.send(
             "**VLG Bot Commands**\n"
-            "`/play`, `/queue`, `/skip`, `/pause`, `/resume`, `/warn`, `/warnings`, `/timeout`, `/ban`"
+            "Prefix commands: `!v help`, `!v coinflip`, `!v rate`, `!v 8ball`, `!v slap`, `!v roast`, "
+            "`!v avatar`, `!v whois`, `!v kick`, `!v ban`, `!v timeout`, `!v removetimeout`\n"
+            "Music slash commands: `/play`, `/queue`, `/skip`, `/pause`, `/resume`, `/join`, `/leave`\n"
+            "Moderation slash commands: `/warn`, `/warnings`, `/clearwarnings`, `/timeout`, `/ban`, `/kick`, `/removetimeout`"
         )
 
 
