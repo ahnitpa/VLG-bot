@@ -64,6 +64,8 @@ class ModerationManager:
         if getattr(tree, "_vlg_moderation_setup", False):
             return
         tree._vlg_moderation_setup = True
+        registered_names = set(getattr(tree, "_vlg_registered_command_names", set()))
+        tree._vlg_registered_command_names = registered_names
 
         @tree.command(name="warn", description="Warn a member")
         @app_commands.describe(member="Member to warn", reason="Reason for the warning")
@@ -147,6 +149,12 @@ class ModerationManager:
                 await interaction.response.send_message(f"✅ Removed timeout from {member.mention}.")
             except discord.Forbidden:
                 await interaction.response.send_message("I don't have permission to remove that timeout.", ephemeral=True)
+
+        for command in (warn, warnings, clearwarnings, timeout_cmd, ban_cmd, kick_cmd, removetimeout):
+            if command.name in registered_names:
+                continue
+            tree.add_command(command)
+            registered_names.add(command.name)
 
 
 def create_moderation_manager(bot: discord.Client) -> "ModerationManager":
