@@ -1,4 +1,4 @@
-import time
+import datetime
 from typing import Any
 
 import discord
@@ -41,7 +41,7 @@ class ModerationManager:
             await interaction.response.send_message("You cannot timeout someone equal to or higher than you.", ephemeral=True)
             return
         try:
-            await member.timeout(discord.utils.utcnow() + discord.timedelta(minutes=minutes), reason=reason)
+            await member.timeout(datetime.timedelta(minutes=minutes), reason=reason)
             await interaction.response.send_message(f"⏱️ Timed out {member.mention} for **{minutes}** minutes.\nReason: **{reason}**")
         except discord.Forbidden:
             await interaction.response.send_message("I don't have permission to timeout that member.", ephemeral=True)
