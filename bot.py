@@ -1,5 +1,6 @@
 import os
 import random
+import re
 import time
 import traceback
 from datetime import timedelta
@@ -444,7 +445,8 @@ async def on_message(message: discord.Message):
 
     is_dev = message.author.id in TRUSTED_DEV_IDS
     is_owner = message.author.id == message.guild.owner_id
-    content_lower = message.content.lower()
+    content = message.content.strip()
+    content_lower = content.lower()
 
     # !setup: owner/dev initializes the bot and refreshes slash commands
     if content_lower == "!setup":
@@ -510,7 +512,7 @@ async def on_message(message: discord.Message):
             await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
             return
 
-        parts = message.content.split()
+        parts = content.split()
         if len(parts) < 2:
             await message.channel.send("❌ **Usage:** `!inactive <voice_channel_id>`")
             return
@@ -540,11 +542,24 @@ async def on_message(message: discord.Message):
     # ============================================================
     # THE !V PREFIX COMMANDS
     # ============================================================
-    if content_lower.startswith("!v "):
-        parts = message.content.split()
-        if len(parts) >= 2:
+    prefix_match = re.match(r"(?i)^!v(?:\s+)?(.*)$", content)
+    if prefix_match:
+        command_text = prefix_match.group(1).strip()
+        if not command_text:
             try:
-                await handle_prefix_command(message, parts[1].lower(), parts[2:])
+                await handle_prefix_command(message, "help", [])
+            except Exception as e:
+                traceback.print_exc()
+                try:
+                    await message.channel.send(f"Something went wrong: `{str(e)[:300]}`")
+                except discord.HTTPException:
+                    pass
+            return
+
+        parts = command_text.split()
+        if parts:
+            try:
+                await handle_prefix_command(message, parts[0].lower(), parts[1:])
             except Exception as e:
                 traceback.print_exc()
                 try:
