@@ -16,6 +16,23 @@ TRUSTED_DEV_IDS = [
 ]
 
 
+def build_prefix_help() -> str:
+    """Return the main !v help text used by the prefix-help command."""
+    return (
+        "**📖 `!v` commands**\n"
+        "**Fun:** `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, `slap @member`, "
+        "`roast @member`, `qna [food|gaming|life]`\n"
+        "**Info:** `avatar [@member]`, `whois [@member]`\n"
+        "**Moderation:** `kick @member [reason]`, `ban @member [reason]`, "
+        "`timeout @member <minutes> [reason]`, `removetimeout @member`, "
+        "`addrole @member @role`, `removerole @member @role`\n"
+        "**Admin:** `setstatus <text>`, `say <text>`, `createcategory <name>`, "
+        "`createchannel <name> [category_id]`, `createvoice <name> [category_id]`, "
+        "`movechannel <#channel or id> <up|down>`\n"
+        "Music uses slash commands (`/play`, `/queue`, ...)."
+    )
+
+
 # ====================== PERMISSION HELPERS ======================
 def is_privileged_user(user: discord.abc.User, guild: Optional[discord.Guild]) -> bool:
     """Trusted developers and the server owner (they also skip role-hierarchy checks)."""
@@ -230,3 +247,14 @@ PREFIX_HELP = (
     "`movechannel <#channel or id> <up|down>`\n"
     "Music uses slash commands (`/play`, `/queue`, ...)."
 )
+
+
+# Back-compat alias for older code paths that still call build_prefix_help().
+# The bot help command invokes this helper; keeping it here avoids NameError.
+def build_prefix_help() -> str:
+    return PREFIX_HELP
+
+
+# Back-compat alias for the older help text constant spelled as the module-level variable.
+# Some older modules may reference PREFIX_HELP or build_prefix_help() interchangeably.
+PREFIX_HELP = PREFIX_HELP
