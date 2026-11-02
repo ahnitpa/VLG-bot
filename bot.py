@@ -5,6 +5,7 @@ import sys
 import time
 import traceback
 import logging
+import asyncio
 from datetime import timedelta
 from threading import Thread
 from typing import Optional
@@ -20,13 +21,56 @@ import music
 
 # ====================== LOGGING ======================
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+LOG_CHANNEL_NAMES = ("bot-logs", "bog-logs")
+
+
+class DiscordLogHandler(logging.Handler):
+    """Attempts to mirror bot logs into a configured server log channel."""
+
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
+
+    def _find_log_channel(self):
+        for guild in self.bot.guilds:
+            for channel_name in LOG_CHANNEL_NAMES:
+                channel = discord.utils.get(guild.text_channels, name=channel_name)
+                if channel is not None:
+                    return channel
+        return None
+
+    def emit(self, record):
+        if not self.bot or not self.bot.is_ready():
+            return
+        channel = self._find_log_channel()
+        if channel is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        msg = self.format(record)
+        loop.create_task(self._send_message(channel, msg))
+
+    async def _send_message(self, channel, message):
+        try:
+            await channel.send(message[:2000])
+        except Exception:
+            pass
+
+
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
 )
 logger = logging.getLogger("vlg_bot")
 logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
+logger.propagate = False
+logger.handlers.clear()
+logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.addHandler(DiscordLogHandler(bot if "bot" in globals() else None))
 
 # ====================== CONFIG ======================
 ROLE_ID = 1535617025744048268
@@ -57,6 +101,10 @@ inactive_config = {}
 
 # Permission helpers, shared content and prefix-parsing helpers live in shared.py
 from shared import *  # noqa: F401,F403
+
+# Rebind the Discord log handler now that bot exists.
+logger.handlers = [handler for handler in logger.handlers if not isinstance(handler, DiscordLogHandler)]
+logger.addHandler(DiscordLogHandler(bot))
 
 
 async def handle_prefix_command(message: discord.Message, command: str, args: list) -> None:
@@ -147,7 +195,6 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         except Exception as e:
             await status_msg.edit(content=f"❌ **Purge Failed:** Internal fault tracking error: `{e}`")
         return
-
 
     # --- SAY ---
     if command == "say":
@@ -607,10 +654,12 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
     """Logs unusual activity like text, voice, or category channels being deleted."""
     log_channel = discord.utils.get(channel.guild.text_channels, name="bot-logs")
     if not log_channel:
+        log_channel = discord.utils.get(channel.guild.text_channels, name="bog-logs")
+    if not log_channel:
         return
 
     # Don't log if the logging channel itself is being deleted
-    if channel.name == "bot-logs":
+    if channel.name in ("bot-logs", "bog-logs"):
         return
 
     embed = discord.Embed(
