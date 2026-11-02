@@ -1,88 +1,107 @@
 # VLG Bot
 
-A hobby Discord bot built in Python for fun, server utilities, moderation helpers, music playback, and small game/economy features.
+A lightweight Discord bot for server management, entertainment, moderation, and music playback.
 
-This repository is a personal project and is intentionally lightweight and easy to extend.
+This project is a personal hobby project written in Python. It is designed to run as a single-service Discord bot with a small set of core features, simple configuration, and minimal deployment overhead.
+
+## Overview
+
+VLG Bot provides:
+
+- Discord moderation tools
+- basic server utility commands
+- AFK tracking and inactivity handling
+- music playback support
+- fun and social commands
+- simple SQLite-backed user statistics
+
+The bot supports both slash commands and a prefix-based command system using `!v`.
 
 ## Features
 
-- Discord bot with both slash commands and `!v` prefix commands
-- Server moderation tools:
-  - kick
-  - ban
-  - timeout
-  - role assignment/removal
-  - channel/category creation and movement
-- AFK system and inactivity tracking
-- Music playback support with FFmpeg and `yt-dlp`
-- Fun commands, coin/game interactions, XP, and user profile utilities
-- SQLite-backed user data for economy-style stats
-- Basic keep-alive Flask server for hosting environments
+### Moderation and server management
 
-## Tech Stack
+- kick members
+- ban members
+- timeout members
+- role assignment and removal
+- create categories and channels
+- move channels up or down
 
-- Python 3.11+
-- discord.py
-- Flask
-- yt-dlp
-- FFmpeg
-- SQLite
+### Utility and social features
 
-## Repository Structure
+- custom status updates
+- ping and latency checks
+- AFK status management
+- user profile and avatar commands
+- random fun commands and mini-game interactions
+
+### Music
+
+- music playback via Discord voice channels
+- FFmpeg integration for audio processing
+- YouTube media playback through `yt-dlp`
+
+### Persistence
+
+- SQLite database for user data and inventory-like records
+- optional environment-based configuration
+
+## Project structure
 
 ```text
 .
-├── bot.py                # Main bot entry point and command registration
-├── afk.py                # AFK tracking and related logic
-├── fun.py                # Fun, economy, game, and utility commands
-├── music.py              # Music-related commands and playback logic
-├── shared.py              # Shared helpers and bot utilities
-├── shared (1).py         # Duplicate/shared helper variant present in repo
-├── fun_core (1).py       # Additional fun logic
-├── fun_games (1).py      # Game-specific logic
-├── main (1).py           # Alternate main entry file present in repo
-├── requirements.txt      # Python dependencies
-├── Dockerfile            # Container build config
+├── bot.py               # Main bot entry point and command registration
+├── afk.py               # AFK tracking logic
+├── fun.py               # Fun and utility commands
+├── music.py             # Music commands and playback logic
+├── shared.py             # Shared helpers and common bot logic
+├── requirements.txt     # Python dependencies
+├── Dockerfile           # Docker image definition
 ├── scripts/
-│   └── init_db.py       # SQLite schema setup
-└── README.md             # Project documentation
+│   └── init_db.py      # Initializes the SQLite database
+├── bot.db              # Generated SQLite database at runtime
+├── README.md           # Project documentation
+└── .env.example        # Optional local config file if added later
 ```
 
-Note: the repository contains a few duplicate or alternate Python files, likely from experimentation or local revisions. `bot.py` is the main runtime file.
+## Requirements
 
-## Getting Started
+- Python 3.11+
+- FFmpeg installed and available on PATH
+- A Discord bot token
 
-### 1. Clone the repository
+## Installation
+
+Clone the repository:
 
 ```bash
 git clone https://github.com/ahnitpa/VLG-bot.git
 cd VLG-bot
 ```
 
-### 2. Create a virtual environment
+Create and activate a virtual environment:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate   # Linux/macOS
-# or
-.venv\Scripts\activate      # Windows
+source .venv/bin/activate
 ```
 
-### 3. Install dependencies
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Initialize the database
+Initialize the database:
 
 ```bash
 python scripts/init_db.py
 ```
 
-This creates a local SQLite database at `bot.db` unless you override it with `DB_PATH` or `BOT_DB_PATH`.
+## Configuration
 
-### 5. Set your bot token
+Set the required environment variable before starting the bot:
 
 ```bash
 export TOKEN="your_discord_bot_token"
@@ -95,78 +114,65 @@ export PORT=8080
 export DB_PATH="/absolute/path/to/bot.db"
 ```
 
-### 6. Run the bot
+## Running the bot
 
 ```bash
 python bot.py
 ```
 
+The bot starts by launching the Discord client and a small Flask keep-alive endpoint for hosted environments.
+
 ## Docker
 
-Build and run with Docker:
+Build the image:
 
 ```bash
 docker build -t vlg-bot .
+```
+
+Run the container:
+
+```bash
 docker run --rm -e TOKEN="your_discord_bot_token" -p 8080:8080 vlg-bot
 ```
 
-The container installs FFmpeg automatically because the music features depend on it.
+## Command usage
 
-## Bot Behavior
+The bot supports both slash commands and the `!v` prefix.
 
-The bot is built around a Discord server workflow:
-
-- Slash commands are registered through `discord.py` command trees
-- Prefix-based commands are handled via `!v <command>`
-- The bot exposes a small "keep alive" web endpoint for hosted environments
-- Music commands and playback state are managed in `music.py`
-- Fun/game/economy commands are handled in `fun.py`
-
-## Example Commands
-
-Common prefix commands include:
+Examples:
 
 ```text
 !v help
 !v ping
 !v afk
 !v afklist
-!v rate <thing>
-!v 8ball <question>
-!v slap @user
-!v roast @user
+!v rate something
+!v 8ball question
 ```
 
-Slash commands are also exposed for moderation and utility actions, including:
+Slash command examples:
 
-- `/setstatus`
-- `/coinflip`
-- `/slap`
-- `/roast`
-- `/createchannel`
-- `/createvoice`
-- `/movechannel`
+```text
+/setstatus
+/coinflip
+/slap
+/roast
+/createchannel
+/createvoice
+/movechannel
+```
+
+## Database
+
+The project uses SQLite for user data and basic economy-style tracking. The database is created automatically by `scripts/init_db.py` unless a custom path is provided through `DB_PATH` or `BOT_DB_PATH`.
 
 ## Notes
 
-- This is a hobby project and not a production-grade bot framework.
-- The repository contains duplicate or legacy files from development experimentation.
-- Some modules may rely on server-specific IDs or custom setup steps.
+- This is a hobby project and not a large-scale production bot framework.
+- The codebase is intentionally compact and easy to extend.
+- Some files may be legacy or duplicate remnants from earlier development iterations.
 
 ## License
 
-This project does not currently appear to include an explicit license file. If you plan to reuse or distribute it, check with the repository owner before doing so.
-
-## Contributing
-
-This project is mainly for personal experimentation, but feel free to fork it and adapt it for your own server or bot idea.
-
-```bash
-git checkout -b my-feature
-git commit -am "Add my feature"
-git push origin my-feature
-```
-
-## Support
-
-For support or questions, open an issue in the repository or contact the project owner directly.
+This project does not currently include a dedicated license file. If you intend to reuse or redistribute the code, verify the repository owner’s licensing terms before doing so.
