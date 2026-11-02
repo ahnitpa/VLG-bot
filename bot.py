@@ -21,11 +21,11 @@ import music
 
 # ====================== LOGGING ======================
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
-LOG_CHANNEL_NAMES = ("bot-logs",)
+LOG_CHANNEL_NAME = "bot-logs"
 
 
 class DiscordLogHandler(logging.Handler):
-    """Attempts to mirror bot logs into the configured server log channel."""
+    """Mirrors bot logs to the configured guild log channel."""
 
     def __init__(self, bot):
         super().__init__()
@@ -33,10 +33,9 @@ class DiscordLogHandler(logging.Handler):
 
     def _find_log_channel(self):
         for guild in self.bot.guilds:
-            for channel_name in LOG_CHANNEL_NAMES:
-                channel = discord.utils.get(guild.text_channels, name=channel_name)
-                if channel is not None:
-                    return channel
+            channel = discord.utils.get(guild.text_channels, name=LOG_CHANNEL_NAME)
+            if channel is not None:
+                return channel
         return None
 
     def emit(self, record):
@@ -105,10 +104,10 @@ from shared import *  # noqa: F401,F403
 logger.addHandler(DiscordLogHandler(bot))
 
 
-def get_log_channel(guild: discord.Guild):
+def get_log_channel(guild: Optional[discord.Guild]):
     if guild is None:
         return None
-    return discord.utils.get(guild.text_channels, name="bot-logs")
+    return discord.utils.get(guild.text_channels, name=LOG_CHANNEL_NAME)
 
 
 def truncate_text(value: str, limit: int = 1000) -> str:
@@ -116,6 +115,26 @@ def truncate_text(value: str, limit: int = 1000) -> str:
     if len(value) <= limit:
         return value
     return value[:limit - 3] + "..."
+
+
+async def send_log_embed(
+    guild: discord.Guild,
+    title: str,
+    description: str,
+    color: discord.Color = discord.Color.blurple(),
+    fields: Optional[list] = None,
+):
+    channel = get_log_channel(guild)
+    if channel is None:
+        return
+    embed = discord.Embed(title=title, description=description, color=color)
+    if fields:
+        for name, value, inline in fields:
+            embed.add_field(name=name, value=value, inline=inline)
+    try:
+        await channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
 
 
 async def handle_prefix_command(message: discord.Message, command: str, args: list) -> None:
@@ -494,6 +513,78 @@ async def on_ready():
 
 
 @bot.event
+async def on_guild_join(guild: discord.Guild):
+    await send_log_embed(
+        guild,
+        "Bot Joined Server",
+        f"The bot has been invited to **{guild.name}**.\nMembers: **{guild.member_count}**",
+        discord.Color.green(),
+        [
+            ("Server ID", f"`{guild.id}`", True),
+            ("Owner", f"{guild.owner.mention if guild.owner else 'Unknown'}", True),
+        ],
+    )
+    logger.info("Joined guild %s (%s)", guild.name, guild.id)
+
+
+@bot.event
+async def on_guild_remove(guild: discord.Guild):
+    logger.warning("Left guild %s (%s)", guild.name, guild.id)
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    await send_log_embed(
+        member.guild,
+        "Member Joined",
+        f"**{member.mention}** joined the server.",
+        discord.Color.green(),
+        [
+            ("Account", f"`{member.id}`", True),
+            ("Joined At", f"<t:{int(member.joined_at.timestamp())}:F>", True),
+        ],
+    )
+
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    await send_log_embed(
+        member.guild,
+        "Member Left",
+        f"**{member.mention}** left the server.",
+        discord.Color.red(),
+        [
+            ("Account", f"`{member.id}`", True),
+            ("Joined At", f"<t:{int(member.joined_at.timestamp())}:F>", True),
+        ],
+    )
+
+
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if before.channel == after.channel:
+        return
+
+    guild = member.guild
+    if before.channel is not None:
+        await send_log_embed(
+            guild,
+            "Voice Leave",
+            f"**{member.mention}** left **{before.channel.name}**.",
+            discord.Color.orange(),
+            [("Channel ID", f"`{before.channel.id}`", True)],
+        )
+    if after.channel is not None:
+        await send_log_embed(
+            guild,
+            "Voice Join",
+            f"**{member.mention}** joined **{after.channel.name}**.",
+            discord.Color.blue(),
+            [("Channel ID", f"`{after.channel.id}`", True)],
+        )
+
+
+@bot.event
 async def on_message(message: discord.Message):
     if message.author.bot or message.guild is None:
         return
@@ -702,7 +793,7 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
     if not log_channel:
         return
 
-    if channel.name == "bot-logs":
+    if channel.name == LOG_CHANNEL_NAME:
         return
 
     embed = discord.Embed(
@@ -778,6 +869,8 @@ async def coinflip(interaction: discord.Interaction):
                 "🪙 **Tails!** You should be timed out, but your permissions protected you. (error code 7)"
             )
 
+
+# (`/steal` now lives in fun.py with real coins)
 
 @tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
 @app_commands.describe(thing="The object, person, or idea you want rated")
