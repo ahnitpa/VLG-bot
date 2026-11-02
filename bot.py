@@ -1,8 +1,10 @@
 import os
 import random
 import re
+import sys
 import time
 import traceback
+import logging
 from datetime import timedelta
 from threading import Thread
 from typing import Optional
@@ -15,6 +17,16 @@ from flask import Flask
 import afk
 import fun
 import music
+
+# ====================== LOGGING ======================
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("vlg_bot")
+logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 
 # ====================== CONFIG ======================
 ROLE_ID = 1535617025744048268
@@ -403,9 +415,9 @@ async def check_inactivity_timers():
                             await target_channel.connect()
                         else:
                             await vc.move_to(target_channel)
-                        print(f"💤 Uptime Connection: Auto-joined idle channel in server {guild.name}")
-                    except Exception as e:
-                        print(f"Could not complete auto-join sequence: {e}")
+                        logger.info("💤 Uptime Connection: Auto-joined idle channel in server %s", guild.name)
+                    except Exception as exc:
+                        logger.exception("Could not complete auto-join sequence in server %s", guild.name)
                     info["idle_since"] = None
 
 
@@ -413,21 +425,21 @@ async def check_inactivity_timers():
 @bot.event
 async def on_ready():
     global synced_once
-    print(f"Logged in as {bot.user} ({bot.user.id})")
-    print("Registered slash commands:", sorted(c.name for c in tree.get_commands()))
+    logger.info("Logged in as %s (%s)", bot.user, bot.user.id)
+    logger.info("Registered slash commands: %s", sorted(c.name for c in tree.get_commands()))
 
     if not check_inactivity_timers.is_running():
         check_inactivity_timers.start()
-        print("⏰ Background inactivity tracking routine initialized.")
+        logger.info("Background inactivity tracking routine initialized.")
 
     if not synced_once:
         synced_once = True
         try:
-            print("🔄 Syncing slash commands globally...")
+            logger.info("Syncing slash commands globally...")
             synced = await tree.sync()
-            print(f"✅ Success! Synced {len(synced)} commands globally.")
+            logger.info("Success! Synced %s commands globally.", len(synced))
         except Exception:
-            traceback.print_exc()
+            logger.exception("Slash command sync failed")
 
 
 @bot.event
@@ -441,7 +453,7 @@ async def on_message(message: discord.Message):
     try:
         await fun.on_message(message)
     except Exception:
-        traceback.print_exc()
+        logger.exception("Unhandled error in fun.on_message")
 
     is_dev = message.author.id in TRUSTED_DEV_IDS
     is_owner = message.author.id == message.guild.owner_id
@@ -471,6 +483,7 @@ async def on_message(message: discord.Message):
             await message.channel.send(embed=embed)
         except Exception as e:
             await status.edit(content=f"❌ **Setup Failed:** `{e}`")
+            logger.exception("Setup command failed")
         return
 
     # !forcesync: owner/dev manually refreshes slash commands
@@ -487,6 +500,7 @@ async def on_message(message: discord.Message):
                 content=f"**Force-Sync Complete!** `{len(synced)}` global app slash commands refreshed everywhere.")
         except Exception as e:
             await status.edit(content=f"❌ **Force-Sync Failed:** `{e}`")
+            logger.exception("Force sync command failed")
         return
 
     # !serverlist: developers only
@@ -537,6 +551,7 @@ async def on_message(message: discord.Message):
             await message.channel.send("❌ **Error:** Could not locate that voice channel ID. Is it hidden from me?")
         except Exception as e:
             await message.channel.send(f"❌ **Failed to map channel:** `{e}`")
+            logger.exception("Failed to map inactivity channel")
         return
 
     # ============================================================
@@ -548,10 +563,10 @@ async def on_message(message: discord.Message):
         if not command_text:
             try:
                 await handle_prefix_command(message, "help", [])
-            except Exception as e:
-                traceback.print_exc()
+            except Exception:
+                logger.exception("Unhandled error in !v help")
                 try:
-                    await message.channel.send(f"Something went wrong: `{str(e)[:300]}`")
+                    await message.channel.send(f"Something went wrong: `{traceback.format_exc()[:300]}`")
                 except discord.HTTPException:
                     pass
             return
@@ -560,10 +575,10 @@ async def on_message(message: discord.Message):
         if parts:
             try:
                 await handle_prefix_command(message, parts[0].lower(), parts[1:])
-            except Exception as e:
-                traceback.print_exc()
+            except Exception:
+                logger.exception("Unhandled error in !v prefix command %s", parts[0])
                 try:
-                    await message.channel.send(f"Something went wrong: `{str(e)[:300]}`")
+                    await message.channel.send(f"Something went wrong: `{traceback.format_exc()[:300]}`")
                 except discord.HTTPException:
                     pass
         return
@@ -625,7 +640,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         msg = "You can't use this command."
     else:
         original = getattr(error, "original", error)
-        traceback.print_exception(type(original), original, original.__traceback__)
+        logger.exception("Unhandled slash command error: %s", original)
         msg = f"Something went wrong: `{str(original)[:300]}`"
 
     try:
@@ -959,6 +974,7 @@ def home():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
+    logger.info("Starting keep-alive web server on port %s", port)
     app.run(host="0.0.0.0", port=port)
 
 
