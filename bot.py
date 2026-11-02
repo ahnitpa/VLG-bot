@@ -21,11 +21,11 @@ import music
 
 # ====================== LOGGING ======================
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
-LOG_CHANNEL_NAMES = ("bot-logs", "bog-logs")
+LOG_CHANNEL_NAMES = ("bot-logs",)
 
 
 class DiscordLogHandler(logging.Handler):
-    """Attempts to mirror bot logs into a configured server log channel."""
+    """Attempts to mirror bot logs into the configured server log channel."""
 
     def __init__(self, bot):
         super().__init__()
@@ -70,7 +70,6 @@ logger.setLevel(getattr(logging, LOG_LEVEL, logging.INFO))
 logger.propagate = False
 logger.handlers.clear()
 logger.addHandler(logging.StreamHandler(sys.stdout))
-logger.addHandler(DiscordLogHandler(bot if "bot" in globals() else None))
 
 # ====================== CONFIG ======================
 ROLE_ID = 1535617025744048268
@@ -102,9 +101,21 @@ inactive_config = {}
 # Permission helpers, shared content and prefix-parsing helpers live in shared.py
 from shared import *  # noqa: F401,F403
 
-# Rebind the Discord log handler now that bot exists.
-logger.handlers = [handler for handler in logger.handlers if not isinstance(handler, DiscordLogHandler)]
+# Attach the Discord channel logger after the bot exists.
 logger.addHandler(DiscordLogHandler(bot))
+
+
+def get_log_channel(guild: discord.Guild):
+    if guild is None:
+        return None
+    return discord.utils.get(guild.text_channels, name="bot-logs")
+
+
+def truncate_text(value: str, limit: int = 1000) -> str:
+    value = value or ""
+    if len(value) <= limit:
+        return value
+    return value[:limit - 3] + "..."
 
 
 async def handle_prefix_command(message: discord.Message, command: str, args: list) -> None:
@@ -155,13 +166,10 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
     # --- PING (LATENCY PERFORMANCE) ---
     if command == "ping":
         start_time = time.time()
-        # Send an initial message to calculate round-trip processing time
         msg = await message.channel.send("Calculating performance spikes...")
         end_time = time.time()
 
-        # API gateway WebSocket latency
         gateway_ping = round(bot.latency * 1000)
-        # Full chat routing process speed
         message_ping = round((end_time - start_time) * 1000)
 
         await msg.edit(content=(
@@ -180,14 +188,11 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         status_msg = await message.channel.send("*Initializing memory array cache purging...*")
 
         try:
-            # 1. Clear internal discord.py user/member message caches safely
             try:
                 bot._connection._messages.clear()
             except Exception:
-                # Accessing private internals may fail on some discord.py versions; ignore safely
                 pass
 
-            # 2. Force Python's core garbage collector to dump unlinked memory states immediately
             import gc
             gc.collect()
 
@@ -381,7 +386,6 @@ async def handle_prefix_command(message: discord.Message, command: str, args: li
         if not args:
             return await send(f"❌ **Usage:** `!v {command} <name> [category_id]`")
 
-        # An optional trailing number is treated as the category ID
         category = None
         name_parts = list(args)
         if len(name_parts) > 1 and name_parts[-1].isdigit():
@@ -496,7 +500,6 @@ async def on_message(message: discord.Message):
 
     await afk.handle_message(message)
 
-    # Chat XP / leveling (never lets a leveling error break normal commands)
     try:
         await fun.on_message(message)
     except Exception:
@@ -507,7 +510,6 @@ async def on_message(message: discord.Message):
     content = message.content.strip()
     content_lower = content.lower()
 
-    # !setup: owner/dev initializes the bot and refreshes slash commands
     if content_lower == "!setup":
         if not (is_dev or is_owner):
             await message.channel.send(
@@ -533,7 +535,6 @@ async def on_message(message: discord.Message):
             logger.exception("Setup command failed")
         return
 
-    # !forcesync: owner/dev manually refreshes slash commands
     if content_lower == "!forcesync":
         if not (is_dev or is_owner):
             await message.channel.send(
@@ -550,7 +551,6 @@ async def on_message(message: discord.Message):
             logger.exception("Force sync command failed")
         return
 
-    # !serverlist: developers only
     if content_lower == "!serverlist":
         if not is_dev:
             await message.channel.send("❌ **Access Denied:** Developer eyes only.")
@@ -567,7 +567,6 @@ async def on_message(message: discord.Message):
         await message.channel.send(report)
         return
 
-    # !inactive <voice_channel_id>: 5-minute automated inactivity fallback channel
     if content_lower.startswith("!inactive"):
         if not (is_dev or is_owner):
             await message.channel.send("❌ **Access Denied:** Server Owner or Devs only.")
@@ -601,9 +600,6 @@ async def on_message(message: discord.Message):
             logger.exception("Failed to map inactivity channel")
         return
 
-    # ============================================================
-    # THE !V PREFIX COMMANDS
-    # ============================================================
     prefix_match = re.match(r"(?i)^!v(?:\s+)?(.*)$", content)
     if prefix_match:
         command_text = prefix_match.group(1).strip()
@@ -630,7 +626,6 @@ async def on_message(message: discord.Message):
                     pass
         return
 
-    # Reply ONLY when the bot is explicitly @mentioned
     if bot.user in message.mentions and not message.mention_everyone:
         if f"<@{bot.user.id}>" in message.content or f"<@!{bot.user.id}>" in message.content:
             try:
@@ -639,7 +634,6 @@ async def on_message(message: discord.Message):
                 pass
             return
 
-    # React to the word "vlg"
     if "vlg" in content_lower:
         try:
             emoji = bot.get_emoji(1559616784200499291)
@@ -648,18 +642,67 @@ async def on_message(message: discord.Message):
             pass
 
 
+@bot.event
+async def on_message_edit(before: discord.Message, after: discord.Message):
+    if before.author is None or before.author.bot or before.guild is None:
+        return
+    if before.content == after.content:
+        return
+
+    channel = get_log_channel(before.guild)
+    if channel is None:
+        return
+
+    embed = discord.Embed(
+        title="Message Edited",
+        description=(
+            f"**Author:** {before.author.mention}\n"
+            f"**Channel:** {before.channel.mention}\n"
+            f"**Jump to message:** [link]({after.jump_url})"
+        ),
+        color=discord.Color.orange(),
+    )
+    embed.add_field(name="Before", value=f"```{truncate_text(before.content or '[no text]')}```", inline=False)
+    embed.add_field(name="After", value=f"```{truncate_text(after.content or '[no text]')}```", inline=False)
+    try:
+        await channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
+
+
+@bot.event
+async def on_message_delete(message: discord.Message):
+    if message.author is None or message.author.bot or message.guild is None:
+        return
+
+    channel = get_log_channel(message.guild)
+    if channel is None:
+        return
+
+    embed = discord.Embed(
+        title="Message Deleted",
+        description=(
+            f"**Author:** {message.author.mention}\n"
+            f"**Channel:** {message.channel.mention}\n"
+            f"**Content:** ```{truncate_text(message.content or '[empty message]')}```"
+        ),
+        color=discord.Color.red(),
+    )
+    try:
+        await channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
+
+
 # ====================== ADVANCED LOGGING MODULE ======================
 @bot.event
 async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
     """Logs unusual activity like text, voice, or category channels being deleted."""
-    log_channel = discord.utils.get(channel.guild.text_channels, name="bot-logs")
-    if not log_channel:
-        log_channel = discord.utils.get(channel.guild.text_channels, name="bog-logs")
+    log_channel = get_log_channel(channel.guild)
     if not log_channel:
         return
 
-    # Don't log if the logging channel itself is being deleted
-    if channel.name in ("bot-logs", "bog-logs"):
+    if channel.name == "bot-logs":
         return
 
     embed = discord.Embed(
@@ -735,8 +778,6 @@ async def coinflip(interaction: discord.Interaction):
                 "🪙 **Tails!** You should be timed out, but your permissions protected you. (error code 7)"
             )
 
-
-# (`/steal` now lives in fun.py with real coins)
 
 @tree.command(name="rate", description="Have the bot judge and rate anything out of 10!")
 @app_commands.describe(thing="The object, person, or idea you want rated")
@@ -993,7 +1034,6 @@ async def movechannel(
     await interaction.response.defer(ephemeral=True)
 
     try:
-        # Moving 'up' lowers the position number (closer to 0); 'down' raises it
         change = -1 if direction.value == "up" else 1
         await target.edit(position=max(0, target.position + change))
 
