@@ -1,18 +1,32 @@
+import os
 import random
+import sqlite3
+import threading
 from typing import Optional
 
 import discord
 from discord import app_commands
 
-# No SQLite or persistence layer remains here.
-# All commands in this module are non-economic and ephemeral-only.
+# Persist per-guild message totals in the bot's SQLite database.
+_DB_PATH = os.environ.get("DB_PATH", "bot.db")
+_db = sqlite3.connect(_DB_PATH, check_same_thread=False)
+_db.execute(
+    """CREATE TABLE IF NOT EXISTS message_counts (
+        guild_id INTEGER NOT NULL,
+        user_id INTEGER NOT NULL,
+        total INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (guild_id, user_id)
+    )"""
+)
+_db.commit()
+_db_lock = threading.Lock()
 
 _COMMANDS = {}
 
 PREFIX_HELP = (
     "**🎮 Fun & utility (`!v`)**\n"
     "**Random:** `cat`, `dog`, `meme`, `joke`, `fact`, `ship @a [@b]`, `choose a, b, c`\n"
-    "**Info:** `help`"
+    "**Info:** `help`, `leaderboard` (server message totals)"
 )
 
 
@@ -192,16 +206,51 @@ _ALIASES = {"ship": "ship", "choose": "choose", "cat": "cat", "dog": "dog", "mem
 
 
 async def on_message(message: discord.Message):
-    # Intentionally left blank: no persistent economy/leveling state.
-    return None
+    """Count every message sent by a human member in a guild."""
+    if message.guild is None or message.author.bot:
+        return
+    with _db_lock:
+        _db.execute(
+            """INSERT INTO message_counts (guild_id, user_id, total) VALUES (?, ?, 1)
+               ON CONFLICT(guild_id, user_id) DO UPDATE SET total = total + 1""",
+            (message.guild.id, message.author.id),
+        )
+        _db.commit()
 
 
 async def handle_prefix(message: discord.Message, command: str, args: list, privileged: bool = False) -> bool:
     if message.guild is None:
         return False
 
-    cmd = (_ALIASES.get(command.lower(), command.lower()))
-    if cmd not in _COMMANDS:
+    cmd = _ALIASES.get(command.lower(), command.lower())
+    if cmd in ("leaderboard", "messages", "top"):
+        with _db_lock:
+            rows = _db.execute(
+                "SELECT user_id, total FROM message_counts WHERE guild_id=? ORDER BY total DESC, user_id ASC LIMIT 10",
+                (message.guild.id,),
+            ).fetchall()
+        if not rows:
+            await message.channel.send("No message activity has been recorded yet.")
+            return True
+
+        medals = ("🥇", "🥈", "🥉")
+        lines = []
+        for rank, (user_id, total) in enumerate(rows, start=1):
+            member = message.guild.get_member(user_id)
+            name = member.mention if member else f"<@{user_id}>"
+            marker = medals[rank - 1] if rank <= len(medals) else f"`{rank}.`"
+            lines.append(f"{marker} {name} — **{total:,}** messages")
+
+        embed = discord.Embed(
+            title=f"📨 {message.guild.name} — Message Leaderboard",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+        embed.set_footer(text="Counts are tracked from when this feature is enabled; bots are excluded.")
+        await message.channel.send(embed=embed)
+        return True
+
+    if not _COMMANDS or cmd not in _COMMANDS:
         return False
 
     args = list(args)
