@@ -2,6 +2,7 @@ import os
 import random
 import sqlite3
 import threading
+from collections import Counter
 from typing import Optional
 
 import discord
@@ -20,6 +21,9 @@ _db.execute(
 )
 _db.commit()
 _db_lock = threading.Lock()
+# During a backfill, keep messages sent after its cutoff separate. This lets
+# the scan rebuild historical totals without losing or double-counting new chat.
+_active_scans = {}
 
 _COMMANDS = {}
 
@@ -216,6 +220,51 @@ async def on_message(message: discord.Message):
             (message.guild.id, message.author.id),
         )
         _db.commit()
+    scan = _active_scans.get(message.guild.id)
+    if scan and message.created_at >= scan["cutoff"]:
+        scan["live"][message.author.id] += 1
+
+
+async def _scan_guild_history(guild: discord.Guild, status: discord.Message) -> tuple[int, int]:
+    """Rebuild totals from accessible text-channel history, then include live messages."""
+    cutoff = discord.utils.utcnow()
+    live_counts = Counter()
+    _active_scans[guild.id] = {"cutoff": cutoff, "live": live_counts}
+    totals = Counter()
+    skipped = 0
+    channels = list(guild.text_channels) + list(guild.threads)
+    try:
+        for index, channel in enumerate(channels, start=1):
+            me = guild.me
+            if me is None or not channel.permissions_for(me).read_message_history:
+                skipped += 1
+                continue
+            try:
+                async for old_message in channel.history(limit=None, before=cutoff):
+                    if not old_message.author.bot:
+                        totals[old_message.author.id] += 1
+            except (discord.Forbidden, discord.NotFound):
+                skipped += 1
+            except discord.HTTPException:
+                skipped += 1
+
+            if index % 5 == 0:
+                try:
+                    await status.edit(content=f"🔎 Scanning message history… checked {index}/{len(channels)} channels.")
+                except discord.HTTPException:
+                    pass
+
+        totals.update(live_counts)
+        with _db_lock:
+            _db.execute("DELETE FROM message_counts WHERE guild_id=?", (guild.id,))
+            _db.executemany(
+                "INSERT INTO message_counts (guild_id, user_id, total) VALUES (?, ?, ?)",
+                [(guild.id, user_id, total) for user_id, total in totals.items()],
+            )
+            _db.commit()
+        return sum(totals.values()), skipped
+    finally:
+        _active_scans.pop(guild.id, None)
 
 
 async def handle_prefix(message: discord.Message, command: str, args: list, privileged: bool = False) -> bool:
@@ -224,13 +273,30 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
 
     cmd = _ALIASES.get(command.lower(), command.lower())
     if cmd in ("leaderboard", "messages", "top"):
+        if args and args[0].lower() == "scan":
+            if not (privileged or message.author.guild_permissions.manage_guild):
+                await message.channel.send("❌ **Access Denied:** Only server managers can scan chat history.")
+                return True
+            if message.guild.id in _active_scans:
+                await message.channel.send("A history scan is already running in this server.")
+                return True
+
+            status = await message.channel.send("🔎 Starting a scan of accessible server text-channel history. This may take a while.")
+            try:
+                total, skipped = await _scan_guild_history(message.guild, status)
+                note = f" Skipped {skipped} channels without readable history." if skipped else ""
+                await status.edit(content=f"✅ History scan complete: indexed **{total:,}** messages.{note}")
+            except discord.HTTPException as exc:
+                await status.edit(content=f"❌ Could not complete the history scan: {str(exc)[:250]}")
+            return True
+
         with _db_lock:
             rows = _db.execute(
                 "SELECT user_id, total FROM message_counts WHERE guild_id=? ORDER BY total DESC, user_id ASC LIMIT 10",
                 (message.guild.id,),
             ).fetchall()
         if not rows:
-            await message.channel.send("No message activity has been recorded yet.")
+            await message.channel.send("No message activity has been recorded yet. A server manager can run `!v leaderboard scan` to count accessible chat history.")
             return True
 
         medals = ("🥇", "🥈", "🥉")
@@ -246,7 +312,7 @@ async def handle_prefix(message: discord.Message, command: str, args: list, priv
             description="\n".join(lines),
             color=discord.Color.blurple(),
         )
-        embed.set_footer(text="Counts are tracked from when this feature is enabled; bots are excluded.")
+        embed.set_footer(text="Counts exclude bots and include history only after a manager runs the scan.")
         await message.channel.send(embed=embed)
         return True
 
