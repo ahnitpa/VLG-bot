@@ -6,6 +6,7 @@ from discord import app_commands
 
 AFK_USERS: dict[int, dict[str, Any]] = {}
 IGNORED_MESSAGES: set[int] = set()
+_AI_BOT: discord.Client | None = None
 
 
 def format_duration(seconds: float) -> str:
@@ -54,55 +55,60 @@ async def handle_message(message: discord.Message) -> bool:
     user_id = message.author.id
     if user_id in AFK_USERS:
         info = await remove_afk(message.author)
-        if info is None:
-            return False
+        if info is not None:
+            duration = time.time() - float(info.get("timestamp", time.time()))
+            reason = str(info.get("reason", "AFK")).strip() or "AFK"
 
-        duration = time.time() - float(info.get("timestamp", time.time()))
-        reason = str(info.get("reason", "AFK")).strip() or "AFK"
-
-        embed = discord.Embed(color=0x2ECC71)
-        embed.set_author(name="👋 Welcome Back!")
-        embed.description = (
-            f"**{message.author.display_name}**, you were AFK for **{format_duration(duration)}**"
-        )
-        embed.add_field(name="AFK Reason", value=reason, inline=True)
-        try:
-            await message.channel.send(embed=embed)
-        except discord.HTTPException:
-            pass
-
-    if not message.mentions:
-        return False
-
-    notified: set[int] = set()
-    for mention in message.mentions:
-        if mention.id in notified:
-            continue
-        if mention.id not in AFK_USERS:
-            continue
-
-        info = AFK_USERS.get(mention.id)
-        if info is None:
-            continue
-
-        duration = time.time() - float(info.get("timestamp", time.time()))
-        reason = str(info.get("reason", "AFK")).strip() or "AFK"
-
-        embed = discord.Embed(color=0xF39C12)
-        embed.set_author(name="📴 AFK Notice")
-        embed.description = f"**{mention.display_name}** is AFK"
-        embed.add_field(name="Reason", value=reason, inline=True)
-        embed.add_field(name="Duration", value=format_duration(duration), inline=True)
-
-        try:
-            await message.channel.send(
-                content=f"📴 **{mention.display_name}** is AFK — *{reason}*",
-                embed=embed,
+            embed = discord.Embed(color=0x2ECC71)
+            embed.set_author(name="👋 Welcome Back!")
+            embed.description = (
+                f"**{message.author.display_name}**, you were AFK for **{format_duration(duration)}**"
             )
-        except discord.HTTPException:
-            await message.channel.send(f"📴 **{mention.display_name}** is AFK — *{reason}*")
+            embed.add_field(name="AFK Reason", value=reason, inline=True)
+            try:
+                await message.channel.send(embed=embed)
+            except discord.HTTPException:
+                pass
 
-        notified.add(mention.id)
+    if message.mentions:
+        notified: set[int] = set()
+        for mention in message.mentions:
+            if mention.id in notified or mention.id not in AFK_USERS:
+                continue
+
+            info = AFK_USERS.get(mention.id)
+            if info is None:
+                continue
+
+            duration = time.time() - float(info.get("timestamp", time.time()))
+            reason = str(info.get("reason", "AFK")).strip() or "AFK"
+
+            embed = discord.Embed(color=0xF39C12)
+            embed.set_author(name="📴 AFK Notice")
+            embed.description = f"**{mention.display_name}** is AFK"
+            embed.add_field(name="Reason", value=reason, inline=True)
+            embed.add_field(name="Duration", value=format_duration(duration), inline=True)
+
+            try:
+                await message.channel.send(
+                    content=f"📴 **{mention.display_name}** is AFK — *{reason}*",
+                    embed=embed,
+                )
+            except discord.HTTPException:
+                try:
+                    await message.channel.send(f"📴 **{mention.display_name}** is AFK — *{reason}*")
+                except discord.HTTPException:
+                    pass
+
+            notified.add(mention.id)
+
+    # Keep the existing bot.py on_message flow as the single message handler;
+    # this invokes AI before its old mention greeting and suppresses that greeting.
+    if _AI_BOT is not None:
+        from ai_responses import handle_ai_reply
+
+        if await handle_ai_reply(_AI_BOT, message):
+            return True
 
     return False
 
@@ -116,8 +122,7 @@ async def afklist_embed() -> discord.Embed:
 
     now = time.time()
     lines = []
-    for user_id, info in AFK_USERS.items():
-        member = discord.utils.get(discord.utils.utcnow().__class__.__mro__ if False else [], "")
+    for info in AFK_USERS.values():
         duration = format_duration(now - float(info.get("timestamp", now)))
         reason = str(info.get("reason", "AFK")).strip() or "AFK"
         lines.append(f"• **{info.get('name', 'Unknown')}** — *{reason}* ({duration} ago)")
@@ -168,6 +173,9 @@ async def slash_afk(interaction: discord.Interaction, reason: str = "AFK") -> No
 
 
 def setup(bot: Any, tree: app_commands.CommandTree) -> None:
+    global _AI_BOT
+    _AI_BOT = bot
+
     @tree.command(name="afk", description="Set yourself as AFK")
     @app_commands.describe(reason="Why are you AFK?")
     async def afk_command(interaction: discord.Interaction, reason: str = "AFK"):
