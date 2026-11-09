@@ -102,8 +102,8 @@ async def handle_message(message: discord.Message) -> bool:
 
             notified.add(mention.id)
 
-    # Keep the existing bot.py on_message flow as the single message handler;
-    # this invokes AI before its old mention greeting and suppresses that greeting.
+    # Keep one shared message handler, and preserve the AI's handled result so
+    # the caller can avoid processing a handled message further if desired.
     if _AI_BOT is not None:
         from ai_responses import handle_ai_reply
 
@@ -175,6 +175,9 @@ async def slash_afk(interaction: discord.Interaction, reason: str = "AFK") -> No
 def setup(bot: Any, tree: app_commands.CommandTree) -> None:
     global _AI_BOT
     _AI_BOT = bot
+
+    from ai_responses import register_memory_commands
+    register_memory_commands(tree)
 
     @tree.command(name="afk", description="Set yourself as AFK")
     @app_commands.describe(reason="Why are you AFK?")
