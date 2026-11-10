@@ -38,6 +38,17 @@ if __name__ == "__main__":
         PRIMARY KEY (guild_id, user_id, item)
     );
     """)
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS guild_config (
+        guild_id INTEGER PRIMARY KEY,
+        log_channel_id INTEGER,
+        moderation_channel_id INTEGER,
+        welcome_channel_id INTEGER,
+        welcome_enabled INTEGER NOT NULL DEFAULT 1,
+        welcome_message TEXT NOT NULL DEFAULT 'Welcome {user} to {server}!',
+        prefix TEXT NOT NULL DEFAULT '!v'
+    );
+    """)
     conn.commit()
     conn.close()
     print(f"SQLite database initialized at: {db_path}")
