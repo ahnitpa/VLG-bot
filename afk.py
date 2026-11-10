@@ -179,6 +179,13 @@ def setup(bot: Any, tree: app_commands.CommandTree) -> None:
     from ai_responses import register_memory_commands
     register_memory_commands(tree)
 
+    # Register per-server configuration and the configured welcome handler here,
+    # since this module's setup() is already called by bot.py during startup.
+    import server_setup
+
+    server_setup.setup(bot, tree)
+    bot.add_listener(server_setup.handle_member_join, "on_member_join")
+
     @tree.command(name="afk", description="Set yourself as AFK")
     @app_commands.describe(reason="Why are you AFK?")
     async def afk_command(interaction: discord.Interaction, reason: str = "AFK"):
