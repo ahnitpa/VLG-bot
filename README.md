@@ -189,4 +189,4 @@ The project uses SQLite for user data and basic economy-style tracking. The data
 
 ## License
 
-This project does not currently include a dedicated license file. If you intend to reuse or redistribute the code, verify the repository owner's licensing terms before doing so.
+This project does not currently include a dedicated license file. That means you will need to ask me for license or a fair agreement.
