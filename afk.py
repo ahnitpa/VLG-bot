@@ -102,8 +102,6 @@ async def handle_message(message: discord.Message) -> bool:
 
             notified.add(mention.id)
 
-    # Keep one shared message handler, and preserve the AI's handled result so
-    # the caller can avoid processing a handled message further if desired.
     if _AI_BOT is not None:
         from ai_responses import handle_ai_reply
 
@@ -172,19 +170,21 @@ async def slash_afk(interaction: discord.Interaction, reason: str = "AFK") -> No
     await interaction.response.send_message(embed=embed)
 
 
-def setup(bot: Any, tree: app_commands.CommandTree) -> None:
+def setup(bot: discord.Client, tree: app_commands.CommandTree) -> None:
     global _AI_BOT
     _AI_BOT = bot
 
     from ai_responses import register_memory_commands
     register_memory_commands(tree)
 
-    # Register per-server configuration and the configured welcome handler here,
-    # since this module's setup() is already called by bot.py during startup.
-    import server_setup
+    @bot.event
+    async def on_member_join(member: discord.Member):
+        from server_setup import handle_member_join
+        await handle_member_join(member)
 
-    server_setup.setup(bot, tree)
-    bot.add_listener(server_setup.handle_member_join, "on_member_join")
+    @bot.event
+    async def on_message(message: discord.Message):
+        await handle_message(message)
 
     @tree.command(name="afk", description="Set yourself as AFK")
     @app_commands.describe(reason="Why are you AFK?")
