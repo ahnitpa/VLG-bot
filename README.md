@@ -207,3 +207,13 @@ The schema includes tables such as:
 ## License
 
 This project does not currently include a dedicated license file. If you want to use or redistribute it, you should ask the maintainer for permission or a licensing agreement.
+
+## Data storage policy
+
+VLG Bot stores only the data needed to provide its features. This section describes the bot's own storage; Discord and Gemini may process data under their respective policies.
+
+- **What is stored:** Discord server and user IDs, economy/leveling data (such as coins, XP, inventory, and cooldowns), server settings, and per-server message totals. If AI memory is used, the bot also stores the prompted conversation text, its reply, and the participating member's ID and names.
+- **How and where it is stored:** Data is written to a local SQLite database. The default file is `bot.db`; setting `DB_PATH` (or, for some components, `BOT_DB_PATH`) changes its location. On a hosted deployment, the hosting provider's configured disk determines the physical storage and whether the file survives restarts. The project maintainer does not specify a separate cloud database.
+- **How long it is kept:** AI conversation memory is limited to the latest 20 exchanges per server and is removed after 30 days. Other saved records, including economy data, settings, and message totals, have no automatic expiry and remain in the database until removed or the database file is deleted.
+- **AI processing:** When the AI reply feature is used, the relevant prompt and conversation context are sent to Gemini to generate a response. Avoid sharing sensitive information with the bot.
+- **Deletion:** Members can use `/ai-memory-forget` to remove their AI exchanges in a server; a member with Manage Server can use `/ai-memory-clear` to clear that server's AI memory. Other stored records can be removed by deleting the corresponding database data or database file; deleting the file removes all locally stored bot data.
