@@ -26,6 +26,13 @@ def format_duration(seconds: float) -> str:
     return f"{days}d {hours}h"
 
 
+def _get_setup_wizard():
+    """Load the setup module lazily to keep command startup wiring in one place."""
+    import server_setup
+
+    return server_setup
+
+
 async def set_afk(member: discord.Member, reason: str = "AFK") -> str:
     cleaned_reason = str(reason).strip() or "AFK"
     now = time.time()
@@ -177,10 +184,12 @@ def setup(bot: discord.Client, tree: app_commands.CommandTree) -> None:
     from ai_responses import register_memory_commands
     register_memory_commands(tree)
 
+    # Register the server setup commands during normal bot startup.
+    _get_setup_wizard().setup(bot, tree)
+
     @bot.event
     async def on_member_join(member: discord.Member):
-        from server_setup import handle_member_join
-        await handle_member_join(member)
+        await _get_setup_wizard().handle_member_join(member)
 
     @bot.event
     async def on_message(message: discord.Message):
