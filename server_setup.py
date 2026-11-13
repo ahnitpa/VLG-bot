@@ -195,7 +195,7 @@ async def _run_setup_wizard(interaction: discord.Interaction) -> None:
     )
 
     if start_reply is None:
-        await channel.send("Setup timed out. Run `/server-setup` again when you’re ready.")
+        await channel.send("Setup timed out. Run `/setup` again when you’re ready.")
         return
 
     if start_reply.lower() in {"cancel", "stop", "exit"}:
@@ -306,13 +306,29 @@ async def _run_setup_wizard(interaction: discord.Interaction) -> None:
 def setup(bot: discord.Client, tree: app_commands.CommandTree) -> None:
     ensure_schema()
 
+    async def _run_setup_command(interaction: discord.Interaction):
+        await _run_setup_wizard(interaction)
+
+    @tree.command(name="setup", description="Run a quick setup wizard for this server")
+    @app_commands.guild_only()
+    @is_authorized()
+    async def setup_command(interaction: discord.Interaction):
+        await _run_setup_command(interaction)
+
+    @tree.command(name="setup_wizard", description="Run a quick setup wizard for this server")
+    @app_commands.guild_only()
+    @is_authorized()
+    async def setup_wizard_command(interaction: discord.Interaction):
+        await _run_setup_command(interaction)
+
     @tree.command(name="server-setup", description="Run a quick setup wizard for this server")
     @app_commands.guild_only()
     @is_authorized()
-    async def server_setup(interaction: discord.Interaction):
-        await _run_setup_wizard(interaction)
+    async def server_setup_command(interaction: discord.Interaction):
+        await _run_setup_command(interaction)
 
     bot.server_setup = get_server_config
+    bot.setup_wizard = get_server_config
     return None
 
 
