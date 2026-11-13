@@ -1,6 +1,6 @@
 1| <img width="234" height="234" alt="202177c614e66ac34ca3324477f4afcd" src="https://github.com/user-attachments/assets/04928022-0d2c-4d49-882b-1173a4013042" />
 2| 
-3| # VLG Bot
+3| # VLG Bot 
 4| 
 5| A lightweight Discord bot for server management, entertainment, moderation, music playback, and Gemini AI replies.
 6| 
