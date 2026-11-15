@@ -192,7 +192,7 @@ Slash command examples:
 
 The project uses SQLite for user data and basic economy-style tracking. The database is initialized by `scripts/init_db.py`, and `DB_PATH` can be used to point to a different database file.
 
-- **How and where it is stored:** Data is written to a local SQLite database. The default file is `bot.db`; setting `DB_PATH` (or, for some components, `BOT_DB_PATH`) changes its location. On a hosted deployment, the hosting provider's configured disk determines the physical storage and whether the file survives restarts. The project maintainer does not specify a separate cloud database.
+- **How and where it is stored:** Data is written to a local SQLite database. The default file is `bot.db`; setting `DB_PATH` (or, for some components, `BOT_DB_PATH`) changes its location. On a hosted deployment, the hosting provider's configured disk determines the physical storage and whether the file survives restarts.
 
 The schema includes tables such as:
 
