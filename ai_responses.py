@@ -18,7 +18,7 @@ import discord
 from discord import app_commands
 
 logger = logging.getLogger("vlg_bot.ai")
-DEFAULT_MODEL = "gemini-3.8-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 MAX_MEMORY_EXCHANGES = 20
 MEMORY_RETENTION_SECONDS = 30 * 24 * 60 * 60
 MAX_PROMPT_CHARS = 4000
