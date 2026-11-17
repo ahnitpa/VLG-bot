@@ -18,7 +18,7 @@ import discord
 from discord import app_commands
 
 logger = logging.getLogger("vlg_bot.ai")
-DEFAULT_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_MODEL = "gemini-2.5-flash"
 MAX_MEMORY_EXCHANGES = 20
 MEMORY_RETENTION_SECONDS = 30 * 24 * 60 * 60
 MAX_PROMPT_CHARS = 4000
@@ -46,6 +46,11 @@ DEFAULT_PERSONALITY = (
 _db_lock = threading.Lock()
 _db: sqlite3.Connection | None = None
 _guild_locks: dict[int, asyncio.Lock] = {}
+
+
+def _search_grounding_enabled() -> bool:
+    value = os.environ.get("GEMINI_USE_SEARCH_GROUNDING", "true").strip().lower()
+    return value not in {"0", "false", "no", "off", "disabled"}
 
 
 def _get_db() -> sqlite3.Connection:
@@ -233,6 +238,9 @@ async def _generate(
         "contents": contents,
         "generationConfig": {"maxOutputTokens": 700, "temperature": 0.9},
     }
+    if _search_grounding_enabled():
+        payload["tools"] = [{"google_search": {}}]
+
     timeout = aiohttp.ClientTimeout(total=40)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.post(
@@ -251,8 +259,15 @@ async def _generate(
                 raise RuntimeError(f"Gemini API HTTP {response.status}")
 
     try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except (KeyError, IndexError, TypeError, AttributeError):
+        candidates = data.get("candidates") if isinstance(data, dict) else []
+        first = candidates[0] if candidates else {}
+        parts = first.get("content", {}).get("parts", []) if isinstance(first, dict) else []
+        text = "".join(
+            part.get("text", "")
+            for part in parts
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+        ).strip()
+    except Exception:
         logger.error("Gemini response did not contain text: %r", data)
         raise RuntimeError("Gemini returned no text")
     if not text:
