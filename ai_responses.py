@@ -18,7 +18,7 @@ import discord
 from discord import app_commands
 
 logger = logging.getLogger("vlg_bot.ai")
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 MAX_MEMORY_EXCHANGES = 20
 MEMORY_RETENTION_SECONDS = 30 * 24 * 60 * 60
 MAX_PROMPT_CHARS = 4000
@@ -271,7 +271,8 @@ async def _generate(
         logger.error("Gemini response did not contain text: %r", data)
         raise RuntimeError("Gemini returned no text")
     if not text:
-        raise RuntimeError("Gemini returned an empty response")
+        logger.error("Gemini response did not contain text: %r", data)
+        raise RuntimeError("Gemini returned no text")
     return text
 
 
