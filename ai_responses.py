@@ -217,6 +217,12 @@ async def _generate(
             "parts": [{
                 "text": (
                     f"{personality} "
+                    "Use Google Search for questions about current events, recent developments, "
+                    "live or frequently changing facts, and anything else where an up-to-date "
+                    "answer matters. Base those answers on the search results, be clear when "
+                    "information is uncertain, and include relevant source citations provided "
+                    "by the search tool. For stable, timeless questions or casual conversation, "
+                    "don't search unnecessarily. "
                     "Keep the conversation natural and let it end naturally. Answer the user's "
                     "message without routinely adding a follow-up question, an offer for more help, "
                     "or a closing line like 'Anything else giving you trouble today?' or 'Are you "
@@ -231,6 +237,8 @@ async def _generate(
             ]
         },
         "contents": contents,
+        # Hardcoded so web grounding is enabled for every AI response request.
+        "tools": [{"google_search": {}}],
         "generationConfig": {"maxOutputTokens": 700, "temperature": 0.9},
     }
     timeout = aiohttp.ClientTimeout(total=40)
