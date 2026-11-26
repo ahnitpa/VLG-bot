@@ -16,21 +16,28 @@ TRUSTED_DEV_IDS = [
 ]
 
 
+# ====================== PREFIX HELP ======================
+PREFIX_HELP = (
+    "**📖 VLG Bot — `!v` Commands**\n\n"
+    "**Fun:** `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, "
+    "`slap @member`, `roast @member`, `qna [food|gaming|life]`\n"
+    "**Utility:** `ping`, `afk [reason]`, `afklist`, `avatar [@member]`, `whois [@member]`, "
+    "`leaderboard [scan]`, `devlist`\n"
+    "**Fun Extras:** `cat`, `dog`, `meme`, `joke`, `fact`, `ship @member [@member]`, "
+    "`choose <a>, <b>, ...`\n"
+    "**Moderation:** `kick @member [reason]`, `ban @member [reason]`, "
+    "`timeout @member <minutes> [reason]`, `removetimeout @member`, "
+    "`addrole @member @role`, `removerole @member @role`\n"
+    "**Server Admin:** `setstatus <text>`, `say <text>`, `createcategory <name>`, "
+    "`createchannel <name> [category_id]`, `createvoice <name> [category_id]`, "
+    "`movechannel <#channel|id> <up|down>`, `cleancache`\n\n"
+    "Music uses slash commands: `/play`, `/queue`, `/skip`, `/stop`, and `/leave`."
+)
+
+
 def build_prefix_help() -> str:
-    """Return the main !v help text used by the prefix-help command."""
-    return (
-        "**📖 `!v` commands**\n"
-        "**Fun:** `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, `slap @member`, "
-        "`roast @member`, `qna [food|gaming|life]`\n"
-        "**Info:** `avatar [@member]`, `whois [@member]`, `devlist`\n"
-        "**Moderation:** `kick @member [reason]`, `ban @member [reason]`, "
-        "`timeout @member <minutes> [reason]`, `removetimeout @member`, "
-        "`addrole @member @role`, `removerole @member @role`\n"
-        "**Admin:** `setstatus <text>`, `say <text>`, `createcategory <name>`, "
-        "`createchannel <name> [category_id]`, `createvoice <name> [category_id]`, "
-        "`movechannel <#channel or id> <up|down>`\n"
-        "Music uses slash commands (`/play`, `/queue`, ...)."
-    )
+    """Return the current main `!v` help text."""
+    return PREFIX_HELP
 
 
 # ====================== PERMISSION HELPERS ======================
@@ -233,31 +240,8 @@ def resolve_channel(message: discord.Message, token: str) -> Optional[discord.ab
     return message.guild.get_channel(channel_id) if channel_id else None
 
 
-PREFIX_HELP = (
-    "**📖 `!v` commands**\n"
-    "**Fun:** `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, `slap @member`, "
-    "`roast @member`, `qna [food|gaming|life]`\n"
-    "**Info:** `avatar [@member]`, `whois [@member]`, `devlist`\n"
-    "**Moderation:** `kick @member [reason]`, `ban @member [reason]`, "
-    "`timeout @member <minutes> [reason]`, `removetimeout @member`, "
-    "`addrole @member @role`, `removerole @member @role`\n"
-    "**Admin:** `setstatus <text>`, `say <text>`, `createcategory <name>`, "
-    "`createchannel <name> [category_id]`, `createvoice <name> [category_id]`, "
-    "`movechannel <#channel or id> <up|down>`\n"
-    "Music uses slash commands (`/play`, `/queue`, ...)."
-)
-
-
-# Back-compat alias for older code paths that still call build_prefix_help().
-# The bot help command invokes this helper; keeping it here avoids NameError.
-def build_prefix_help() -> str:
-    return PREFIX_HELP
-
-
-# The main !v handler delegates first to fun.handle_prefix(). Hook the new
-# lightweight info command there so it works without duplicating the main router.
-# User names are resolved from this server's member cache; missing members fall
-# back to their stable Discord IDs without making an API request.
+# Install !v devlist through the fun prefix router. Keep this wrapper so the
+# command works through the same prefix dispatch used by all fun/utility commands.
 import fun as _fun_module
 _original_fun_handle_prefix = _fun_module.handle_prefix
 
@@ -270,7 +254,7 @@ async def _handle_prefix_with_devlist(message, command, args, privileged=False):
             if member is None:
                 lines.append(f"• `{user_id}`")
             else:
-                # Plain text, not a Discord mention, so listing doesn't ping anyone.
+                # Plain text instead of a mention, so this command never pings users.
                 lines.append(f"• @{member.name} (`{user_id}`)")
 
         embed = discord.Embed(
@@ -285,8 +269,3 @@ async def _handle_prefix_with_devlist(message, command, args, privileged=False):
 
 
 _fun_module.handle_prefix = _handle_prefix_with_devlist
-
-
-# Back-compat alias for the older help text constant spelled as the module-level variable.
-# Some older modules may reference PREFIX_HELP or build_prefix_help() interchangeably.
-PREFIX_HELP = PREFIX_HELP
