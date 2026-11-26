@@ -22,7 +22,7 @@ def build_prefix_help() -> str:
         "**📖 `!v` commands**\n"
         "**Fun:** `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, `slap @member`, "
         "`roast @member`, `qna [food|gaming|life]`\n"
-        "**Info:** `avatar [@member]`, `whois [@member]`\n"
+        "**Info:** `avatar [@member]`, `whois [@member]`, `devlist`\n"
         "**Moderation:** `kick @member [reason]`, `ban @member [reason]`, "
         "`timeout @member <minutes> [reason]`, `removetimeout @member`, "
         "`addrole @member @role`, `removerole @member @role`\n"
@@ -237,7 +237,7 @@ PREFIX_HELP = (
     "**📖 `!v` commands**\n"
     "**Fun:** `coinflip`, `steal @member`, `rate <thing>`, `8ball <question>`, `slap @member`, "
     "`roast @member`, `qna [food|gaming|life]`\n"
-    "**Info:** `avatar [@member]`, `whois [@member]`\n"
+    "**Info:** `avatar [@member]`, `whois [@member]`, `devlist`\n"
     "**Moderation:** `kick @member [reason]`, `ban @member [reason]`, "
     "`timeout @member <minutes> [reason]`, `removetimeout @member`, "
     "`addrole @member @role`, `removerole @member @role`\n"
@@ -252,6 +252,39 @@ PREFIX_HELP = (
 # The bot help command invokes this helper; keeping it here avoids NameError.
 def build_prefix_help() -> str:
     return PREFIX_HELP
+
+
+# The main !v handler delegates first to fun.handle_prefix(). Hook the new
+# lightweight info command there so it works without duplicating the main router.
+# User names are resolved from this server's member cache; missing members fall
+# back to their stable Discord IDs without making an API request.
+import fun as _fun_module
+_original_fun_handle_prefix = _fun_module.handle_prefix
+
+
+async def _handle_prefix_with_devlist(message, command, args, privileged=False):
+    if command.lower() == "devlist":
+        lines = []
+        for user_id in TRUSTED_DEV_IDS:
+            member = message.guild.get_member(user_id)
+            if member is None:
+                lines.append(f"• `{user_id}`")
+            else:
+                # Plain text, not a Discord mention, so listing doesn't ping anyone.
+                lines.append(f"• @{member.name} (`{user_id}`)")
+
+        embed = discord.Embed(
+            title="🛠️ Trusted Developers",
+            description="\n".join(lines),
+            color=discord.Color.blurple(),
+        )
+        await message.channel.send(embed=embed)
+        return True
+
+    return await _original_fun_handle_prefix(message, command, args, privileged=privileged)
+
+
+_fun_module.handle_prefix = _handle_prefix_with_devlist
 
 
 # Back-compat alias for the older help text constant spelled as the module-level variable.
