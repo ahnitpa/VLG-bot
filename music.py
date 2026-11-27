@@ -71,7 +71,8 @@ elif os.path.exists("cookies.txt"):
 
 FFMPEG_OPTIONS = {
     "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
-    "options": "-vn",
+    # Lower the level inside FFmpeg, before conversion to 16-bit audio can clip it
+    "options": "-vn -af volume=-8dB",
     "executable": FFMPEG_PATH,
 }
 
