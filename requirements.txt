@@ -1,6 +1,7 @@
-discord.py[voice]
+discord.py[voice]>=2.7
 PyNaCl
 Flask
 yt-dlp
 google-generativeai
 aiohttp
+imageio-ffmpeg

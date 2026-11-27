@@ -17,12 +17,13 @@ requirements.txt:
 """
 
 import asyncio
+import logging
 import math
 import os
 import random
 import shutil
+import tempfile
 import time
-import traceback
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
@@ -35,12 +36,17 @@ from discord import app_commands
 # SETTINGS
 # ============================================================
 
-# Bundled ffmpeg binary (from imageio-ffmpeg) so Render needs no Dockerfile.
-try:
-    import imageio_ffmpeg
-    FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
-except ImportError:
-    FFMPEG_PATH = "ffmpeg"
+log = logging.getLogger("music")
+
+# Prefer the system ffmpeg (installed by the Dockerfile); otherwise fall back to
+# the binary bundled with imageio-ffmpeg.
+FFMPEG_PATH = shutil.which("ffmpeg")
+if FFMPEG_PATH is None:
+    try:
+        import imageio_ffmpeg
+        FFMPEG_PATH = imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError):
+        FFMPEG_PATH = "ffmpeg"
 
 yt_dlp.utils.bug_reports_message = lambda *a, **k: ""
 
@@ -64,8 +70,8 @@ elif os.path.exists("cookies.txt"):
 
 
 FFMPEG_OPTIONS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -re",
-    "options": "-vn -filter:a atempo=1.0",
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "options": "-vn",
     "executable": FFMPEG_PATH,
 }
 
@@ -111,6 +117,7 @@ class GuildPlayer:
     skip_votes: set = field(default_factory=set)
     skip_flag: bool = False                # True while a skip/replay is in progress
     auto_paused: bool = False              # True if we paused because the channel emptied
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)  # one track start at a time
 
     def reset(self) -> None:
         self.queue.clear()
@@ -151,6 +158,20 @@ def now_playing_embed(track: Track, player: GuildPlayer) -> discord.Embed:
     embed.add_field(name="Loop", value=LOOP_LABELS[player.loop], inline=True)
     embed.add_field(name="Volume", value=f"{int(player.volume * 100)}%", inline=True)
     return embed
+
+
+class CountingSource(discord.PCMVolumeTransformer):
+    """Volume control that also records whether FFmpeg produced any audio."""
+
+    def __init__(self, original: discord.AudioSource, volume: float):
+        super().__init__(original, volume=volume)
+        self.frames = 0
+
+    def read(self) -> bytes:
+        data = super().read()
+        if data:
+            self.frames += 1
+        return data
 
 
 def friendly_error(error: Exception) -> str:
@@ -219,7 +240,7 @@ async def notify(player: GuildPlayer, embed: discord.Embed) -> None:
     try:
         await player.text_channel.send(embed=embed)
     except Exception as e:
-        print(f"Could not post music status: {e}")
+        log.warning("Could not post music status: %s", e)
 
 
 def do_skip(vc: discord.VoiceClient, player: GuildPlayer) -> None:
@@ -242,12 +263,80 @@ def do_skip(vc: discord.VoiceClient, player: GuildPlayer) -> None:
         vc.stop()
     except Exception as e:
         # Don't let stop errors crash the bot — just log them.
-        print(f"Error while trying to skip playback: {e}")
+        log.warning("Error while trying to skip playback: %s", e)
 
 
 # ============================================================
 # PLAYBACK ENGINE
 # ============================================================
+
+
+async def _report_failure(player: GuildPlayer, track: Track, reason: str) -> None:
+    log.error("Could not play %s: %s", track.title, reason)
+    await notify(player, make_embed(
+        "❌ Playback Error", 0xE74C3C,
+        f"Couldn't play **{track.title}**: `{reason[:300]}`. Skipping."))
+
+
+async def _start_track(guild_id: int, vc: discord.VoiceClient,
+                       player: GuildPlayer, track: Track) -> None:
+    """Start FFmpeg for one track. Raises if playback cannot be started."""
+    # Stream links expire, so refresh the link if this song waited a while
+    if time.time() - track.fetched_at > STREAM_MAX_AGE:
+        try:
+            data = await extract(track.page_url, allow_playlist=False)
+            if "entries" in data:
+                data = next(e for e in data["entries"] if e)
+            track.stream_url = data["url"]
+            track.fetched_at = time.time()
+        except Exception:
+            log.exception("Could not refresh stream link for %s", track.title)
+        # /stop or /leave may have run while we were waiting
+        if player.current is not track:
+            return
+
+    errors = tempfile.TemporaryFile()  # collects FFmpeg's error messages
+    source = None
+
+    async def finish(error: Optional[Exception]) -> None:
+        try:
+            errors.seek(0)
+            output = errors.read().decode(errors="replace").strip()
+            errors.close()
+            if output:
+                log.warning("FFmpeg output for %s:\n%s", track.title, output[-2000:])
+
+            # No audio at all (and nobody skipped or stopped it) means it failed
+            failed = error is not None or source.frames == 0
+            if failed and player.current is track and not player.skip_flag:
+                player.skip_flag = True  # never loop a broken track
+                if error is not None:
+                    reason = str(error)
+                elif output:
+                    # Signed stream links are long and secret-ish; leave them out
+                    reason = output.splitlines()[-1].replace(track.stream_url, "<stream>")
+                else:
+                    reason = "FFmpeg produced no audio"
+                await _report_failure(player, track, reason)
+        except Exception:
+            log.exception("Error after playback in guild %s", guild_id)
+        await play_next(guild_id)
+
+    def after(error: Optional[Exception]) -> None:
+        # Runs in the audio thread, so hand the work back to the event loop
+        asyncio.run_coroutine_threadsafe(finish(error), client.loop)
+
+    try:
+        options = {**FFMPEG_OPTIONS,
+                   "before_options": "-loglevel error " + FFMPEG_OPTIONS["before_options"]}
+        audio = discord.FFmpegPCMAudio(track.stream_url, stderr=errors, **options)
+        source = CountingSource(audio, volume=player.volume)
+        vc.play(source, after=after)
+    except Exception:
+        if source is not None:
+            source.cleanup()
+        errors.close()
+        raise
 
 
 async def _play_next(guild_id: int) -> None:
@@ -256,6 +345,11 @@ async def _play_next(guild_id: int) -> None:
     vc = guild.voice_client if guild else None
 
     if vc is None or not vc.is_connected():
+        if player.current or player.queue:
+            log.warning("Voice connection lost in guild %s; clearing queue", guild_id)
+            await notify(player, make_embed(
+                "❌ Playback Error", 0xE74C3C,
+                "I lost the voice connection, so the queue was cleared. Try `/play` again."))
         player.reset()
         return
     if vc.is_playing() or vc.is_paused():
@@ -272,68 +366,52 @@ async def _play_next(guild_id: int) -> None:
     player.skip_votes.clear()
     player.current = None
 
-    if not player.queue:
-        if finished is not None:
-            await notify(player, make_embed(
-                "🎵 Queue Finished", 0x95A5A6, "No more tracks in the queue."))
-            try:
-                await vc.channel.edit(status="")
-            except Exception:
-                pass
-        return
-
-    track = player.queue.popleft()
-    player.current = track
-
-    # Stream links expire, so refresh the link if this song waited a while
-    if time.time() - track.fetched_at > STREAM_MAX_AGE:
+    # Keep going until one track starts or the queue runs out
+    while player.queue:
+        track = player.queue.popleft()
+        player.current = track
         try:
-            data = await extract(track.page_url, allow_playlist=False)
-            if "entries" in data:
-                data = data["entries"]
-            track.stream_url = data["url"]
-            track.fetched_at = time.time()
+            await _start_track(guild_id, vc, player, track)
         except Exception as e:
-            print(f"Could not refresh stream link for {track.title}: {e}")
+            log.exception("Could not start %s", track.title)
+            player.current = None
+            await _report_failure(player, track, str(e) or type(e).__name__)
+            continue
 
-    def after(error: Optional[Exception]) -> None:
-        if error:
-            print(f"Playback error in guild {guild_id}: {error}")
-        # 🔧 This safely routes the loop through the client loop context
-        asyncio.run_coroutine_threadsafe(play_next(guild_id), client.loop)
+        if player.current is not track:  # stopped while loading
+            continue
 
-    try:
-        audio = discord.FFmpegPCMAudio(track.stream_url, **FFMPEG_OPTIONS)
-        vc.play(discord.PCMVolumeTransformer(audio, volume=player.volume), after=after)
-        
         # 🎶 Update Voice Channel Status
-        status_text = f"{track.title}"
+        status_text = track.title
         if len(status_text) > 50:
             status_text = status_text[:47] + "..."
         try:
             await vc.channel.edit(status=status_text)
         except Exception as e:
-            print(f"Could not update voice channel status: {e}")
+            log.warning("Could not update voice channel status: %s", e)
 
-    except Exception as e:
-        print(f"Could not start {track.title}: {e}")
-        player.current = None
-        await notify(player, make_embed(
-            "❌ Playback Error", 0xE74C3C,
-            f"Couldn't play **{track.title}**: `{str(e)[:200]}`. Skipping."))
-        await _play_next(guild_id)
+        await notify(player, now_playing_embed(track, player))
         return
 
-    await notify(player, now_playing_embed(track, player))
+    if finished is not None:
+        await notify(player, make_embed(
+            "🎵 Queue Finished", 0x95A5A6, "No more tracks in the queue."))
+        try:
+            await vc.channel.edit(status="")
+        except Exception:
+            pass
 
 
 async def play_next(guild_id: int) -> None:
     """Master controller loop for passing data to the play execution frame."""
+    player = get_player(guild_id)
     try:
-        await _play_next(guild_id)
-    except Exception:
-        print(f"Music queue error in guild {guild_id}:")
-        traceback.print_exc()
+        async with player.lock:
+            await _play_next(guild_id)
+    except Exception as e:
+        log.exception("Music queue error in guild %s", guild_id)
+        await notify(player, make_embed(
+            "❌ Music Error", 0xE74C3C, f"The player hit an error: `{str(e)[:300]}`"))
 
 # ============================================================
 # STAY IN THE CHANNEL WHEN EMPTY (silent, not leaving)
@@ -378,7 +456,7 @@ async def on_voice_state_update(member: discord.Member,
             if player:
                 player.auto_paused = False
     except Exception:
-        traceback.print_exc()
+        log.exception("Error in music voice state handler")
 
 
 # ============================================================
@@ -429,7 +507,7 @@ async def leave(interaction: discord.Interaction):
 
 # 🔧 FIX: Complete rewrite of the play function to seamlessly iterate profile playlists
 @app_commands.command(name="play", description="Play a track or an entire SoundCloud playlist/profile!")
-@app_commands.describe(query="SoundCloud track, playlist, or user profile URL")
+@app_commands.describe(query="Song name, or a SoundCloud track, playlist, or profile URL")
 async def play(interaction: discord.Interaction, query: str):
     await interaction.response.defer()
 
@@ -442,21 +520,35 @@ async def play(interaction: discord.Interaction, query: str):
     vc = interaction.guild.voice_client
 
     try:
+        # A dead voice client would accept songs but never play them
+        if vc is not None and not vc.is_connected():
+            await vc.disconnect(force=True)
+            vc = None
         if vc is None:
             vc = await channel.connect()
         elif vc.channel != channel:
             await vc.move_to(channel)
     except Exception as e:
-        await interaction.followup.send(f"❌ Could not join voice channel: {e}")
+        log.exception("Could not join voice channel")
+        await interaction.followup.send(
+            f"❌ Could not join voice channel: {str(e) or type(e).__name__}")
         return
 
     player = get_player(interaction.guild.id)
     player.text_channel = interaction.channel
 
+    # Anything that isn't a link is treated as a SoundCloud search
+    is_url = query.startswith(("http://", "https://"))
     try:
-        data = await extract(query, allow_playlist=True)
+        data = await extract(query if is_url else f"scsearch1:{query}",
+                             allow_playlist=True)
+        if not is_url:
+            results = [e for e in data.get("entries") or [] if e]
+            if not results:
+                raise ValueError("No results found.")
+            data = results[0]
     except Exception as e:
-        traceback.print_exc()
+        log.exception("Could not look up %r", query)
         await interaction.followup.send(f"❌ Couldn't parse destination link: {friendly_error(e)}")
         return
 

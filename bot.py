@@ -562,6 +562,9 @@ async def on_member_remove(member: discord.Member):
 
 @bot.event
 async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    # This handler replaces the one music.setup() registers, so forward to it
+    await music.on_voice_state_update(member, before, after)
+
     if before.channel == after.channel:
         return
 
